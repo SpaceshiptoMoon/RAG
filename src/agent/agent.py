@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from langchain_community.llms import Ollama
 from langchain_core.prompts import PromptTemplate
 from langchain.agents import tool, initialize_agent, AgentType
-from langchain.agents import tool, initialize_agent, AgentType
 
 from src.agent.tools import google_search
 

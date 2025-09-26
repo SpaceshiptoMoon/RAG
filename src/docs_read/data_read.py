@@ -1,7 +1,7 @@
 import os
 import re
 import markdown
-from typing import List
+from typing import List, Union
 from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
 from bs4 import BeautifulSoup
 
@@ -43,11 +43,11 @@ class ReadFiles:
         
         else:
             file_type = self._path.split('.')
-            if file_type[1] in enable_read_type:
+            if file_type[-1] in enable_read_type:
                files.append(self._path)
                return files
             else:
-                raise TypeError(f"{file_type[1]}文件类型不可读取")
+                raise TypeError(f"{file_type[-1]}文件类型不可读取")
         
     def get_content(self, max_token_len: int = 600, cover_content: int = 150) -> List[str]:
         """
@@ -91,6 +91,12 @@ class ReadFiles:
                 sent_list[-1] += ele
             elif ele:
                 sent_list.append(ele)
+
+        # === 新增步骤：去除每个句子的首尾空格 ===
+        sent_list = [sentence.strip() for sentence in sent_list]
+        # 或者，如果只想去除普通空格，可以使用 `.strip(' ')`
+        # sent_list = [sentence.strip(' ') for sentence in sent_list]
+
         return sent_list
         
     @classmethod
@@ -218,7 +224,8 @@ class ReadFiles:
 if __name__ == "__main__":
     dir_path = r'C:\Users\18229\Desktop\天择\RAG\data\2020-03-20__聚灿光电科技股份有限公司__300708__聚灿光电__2019年__年度报告 (1).pdf'
     reader = ReadFiles(dir_path)
-    doc_ = reader.get_content()
+    doc_ = reader.read_pdf(dir_path)
+    print(doc_)
     doc_chunk = reader.get_symbol_content()
     print(doc_chunk[-2:])
     print(len(doc_chunk))

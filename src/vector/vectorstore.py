@@ -5,16 +5,17 @@ vector.py - 文档向量化与向量存储模块
 """
 
 import os
+import time
 import logging
-from typing import List, Optional
-from langchain_community.document_loaders import (
-    TextLoader, 
-    PyPDFLoader, 
-    Docx2txtLoader
-)
+from typing import List, Optional, Union
+from tenacity import retry, wait_exponential, stop_after_attempt
+from langchain_core.documents.base import Document
+from dotenv import load_dotenv
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_openai.embeddings import OpenAIEmbeddings
+
+from src.docs_read.data_read import ReadFiles
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -24,38 +25,49 @@ class DocumentVectorizer:
     """文档向量化处理器"""
     
     def __init__(self, 
-                 embedding_model: str = "BAAI/bge-small-zh-v1.5",
-                 vector_store_path: str = "./vector_db"
+                 vector_store_path: str 
                  ):
         """
         初始化向量化处理器
         
         Args:
-            embedding_model: 嵌入模型名称
             vector_store_path: 向量数据库存储路径
         """
-        self.embedding_model = embedding_model
         self.vector_store_path = vector_store_path
         
         # 初始化嵌入模型
         self.embeddings = self._initialize_embeddings()
-        self.vector_store = None
+        self.vector_store = Chroma(
+                    persist_directory=self.vector_store_path,
+                    embedding_function=self.embeddings
+                )
+             
+    def __init_doc_operater(self, path):
+        return ReadFiles(path)
         
-    def _initialize_embeddings(self) -> HuggingFaceBgeEmbeddings:
+    def _initialize_embeddings(self) -> OpenAIEmbeddings:
         """初始化嵌入模型"""
         try:
-            embeddings = HuggingFaceBgeEmbeddings(
-                model_name=self.embedding_model,
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
-            logger.info(f"嵌入模型 {self.embedding_model} 初始化成功")
+            load_dotenv()
+            model = os.getenv("SILICONFLOW_MODEL_NAME")
+            base_url = os.getenv("SILICONFLOW_BASE_URL")
+            api_key = os.getenv("SILICONFLOW_API_KEY")
+            embeddings = OpenAIEmbeddings(model=model, base_url=base_url, api_key=api_key)
+            logger.info(f"嵌入模型初始化成功")
             return embeddings
         except Exception as e:
             logger.error(f"嵌入模型初始化失败: {e}")
             raise
-    
-    
+        
+    def txt_to_Document(self, chunk: Union[List, str])->List[Document]:
+        docs = []
+        if isinstance(chunk, List):
+            for txt in chunk:
+                docs.append(Document(page_content=txt))
+        else:
+            docs.append(page_content=chunk)
+        return docs
+        
     def create_vector_store(self, chunks: List, persist: bool = True) -> Chroma:
         """
         创建向量存储
@@ -74,6 +86,7 @@ class DocumentVectorizer:
                 persist_directory=self.vector_store_path if persist else None
             )
             
+          
             if persist:
                 self.vector_store.persist()
                 logger.info(f"向量数据库已持久化到: {self.vector_store_path}")
@@ -84,7 +97,25 @@ class DocumentVectorizer:
         except Exception as e:
             logger.error(f"向量数据库创建失败: {e}")
             raise
-    
+        
+    def delete_db(self) -> None:
+        if self.vector_store:
+            client = self.vector_store._client
+            
+            # 获取所有集合
+            collections = client.list_collections()
+            
+            logger.info(f"清空下面集合{collections}")
+            
+            # 逐个清空集合内容
+            for collection in collections:
+                # 获取集合中的所有文档ID
+                items = collection.get()
+                if items['ids']:
+                    # 删除集合中的所有文档
+                    collection.delete(ids=items['ids'])
+                    print(f"已清空集合: {collection.name}")
+                
     def add_to_existing_store(self, chunks: List) -> None:
         """
         向现有向量数据库添加文档
@@ -110,29 +141,55 @@ class DocumentVectorizer:
         self.vector_store.persist()
         logger.info(f"成功添加 {len(chunks)} 个文本块到向量数据库")
     
-    def process_document(self, file_path: str, add_to_existing: bool = False) -> bool:
+    def process_document(self, file_path: str, is_text: str = True, add_to_existing: bool = True, batch_size: int = 30) -> bool:
         """
         处理单个文档的完整流程
         
         Args:
             file_path: 文档路径
+            is_text: 是否为文本类型
             add_to_existing: 是否添加到现有数据库
+            batch_size: 嵌入模型每次处理的chunk大小
             
         Returns:
             处理是否成功
         """
         try:
-            # 1. 加载文档
-            documents = self.load_document(file_path)
+            # 确保批次大小不超过API限制
+            if batch_size > 64:
+                logger.warning(f"批次大小 {batch_size} 超过API限制(64)，已自动调整为64")
+                batch_size = 64
+                
+            # 1. 加载文档操作器
+            documents_operater = self.__init_doc_operater(file_path)
             
             # 2. 分割文档
-            chunks = self.split_documents(documents)
+            symbol_chunks = documents_operater.get_symbol_content()
+            token_chunks = documents_operater.get_content()
             
-            # 3. 创建或更新向量数据库
-            if add_to_existing:
-                self.add_to_existing_store(chunks)
-            else:
-                self.create_vector_store(chunks)
+            if is_text:
+                symbol_chunks = self.txt_to_Document(symbol_chunks)
+                
+            if is_text:
+                token_chunks = self.txt_to_Document(token_chunks)
+                
+            chunks = token_chunks + symbol_chunks 
+            
+            # 3. 创建或更新向量数据库         
+            total_chunks  = len(chunks)
+    
+            for i in range(0, total_chunks , batch_size):
+                batch = chunks[i:i + batch_size]
+
+                logger.info(f"正在处理批次 {i//batch_size + 1}/{(total_chunks-1)//batch_size + 1} ({len(batch)}个文本块)")
+                
+                
+                if add_to_existing:
+                    self.add_to_existing_store(batch)
+                else:
+                    self.create_vector_store(chunks)
+                
+                time.sleep(2)
             
             logger.info(f"文档处理完成: {file_path}")
             return True
@@ -160,52 +217,68 @@ class DocumentVectorizer:
         
         logger.info(f"相似度查询完成，返回 {len(results)} 个结果")
         return results
-
-# 使用示例和测试函数
-def main():
-    """主函数 - 使用示例"""
-    # 初始化向量化处理器
-    vectorizer = DocumentVectorizer(
-        embedding_model="BAAI/bge-small-zh-v1.5",
-        vector_store_path="./my_vector_db",
-        chunk_size=500,
-        chunk_overlap=50
-    )
-    
-    # 示例文档路径（请替换为实际路径）
-    sample_doc_path = "sample_document.txt"
-    
-    # 检查示例文件是否存在，如果不存在则创建
-    if not os.path.exists(sample_doc_path):
-        with open(sample_doc_path, 'w', encoding='utf-8') as f:
-            f.write("""这是示例文档内容。
-            
-自然语言处理是人工智能的重要分支。
-向量化技术可以将文本转换为数值表示。
-相似度搜索可以帮助我们找到相关的文档内容。
-            
-机器学习算法需要数值数据作为输入。
-文本向量化使得计算机能够理解文字信息。""")
-        print(f"已创建示例文件: {sample_doc_path}")
-    
-    try:
-        # 处理文档
-        success = vectorizer.process_document(sample_doc_path)
         
-        if success:
-            print("文档向量化处理成功！")
+    def _initialize_vector_store(self, collection_name: str = "documents_collection") -> Chroma:
+        """
+        初始化或加载向量存储
+        
+        Args:
+            collection_name: 集合名称，用于区分不同的文档集合
             
-            # 测试查询
-            test_query = "什么是文本向量化？"
-            results = vectorizer.query_similarity(test_query)
-            
-            print(f"\n查询: '{test_query}'")
-            print("相似文档结果:")
-            for i, doc in enumerate(results):
-                print(f"{i+1}. {doc.page_content[:100]}...")
+        Returns:
+            初始化后的向量存储实例
+        """
+        try:
+            # 检查是否已经存在持久化的向量数据库
+            if os.path.exists(self.vector_store_path):
+                logger.info(f"加载现有向量数据库: {self.vector_store_path}")
                 
-    except Exception as e:
-        print(f"处理失败: {e}")
+                # 从持久化目录加载现有向量存储
+                self.vector_store = Chroma(
+                    persist_directory=self.vector_store_path,
+                    embedding_function=self.embeddings,
+                    collection_name=collection_name
+                )
+                
+                # 验证集合是否存在且包含文档
+                collections = self.vector_store._client.list_collections()
+                collection_exists = any(col.name == collection_name for col in collections)
+                
+                if collection_exists:
+                    # 检查集合中是否有文档
+                    collection = self.vector_store._client.get_collection(collection_name)
+                    count = collection.count()
+                    logger.info(f"向量数据库加载成功，集合 '{collection_name}' 中包含 {count} 个文档")
+                else:
+                    logger.info("集合不存在，将创建新的空向量存储")
+                    self.vector_store = None
+                    
+            # 如果不存在持久化数据或加载失败，创建新的向量存储
+            if self.vector_store is None:
+                logger.info("创建新的向量数据库")
+                
+                # 确保存储目录存在
+                os.makedirs(self.vector_store_path, exist_ok=True)
+                
+                # 创建空的向量存储 [7](@ref)
+                self.vector_store = Chroma(
+                    persist_directory=self.vector_store_path,
+                    embedding_function=self.embeddings,
+                    collection_name=collection_name
+                )
+                
+                logger.info(f"新的向量数据库创建成功: {self.vector_store_path}")
+            
+            return self.vector_store
+            
+        except Exception as e:
+            logger.error(f"向量数据库初始化失败: {e}")
+            
+            # 备用方案：创建内存中的临时向量存储
+            logger.warning("使用内存中的临时向量存储作为备用方案")
+            self.vector_store = Chroma(
+                embedding_function=self.embeddings,
+                collection_name=collection_name
+            )
+            return self.vector_store
 
-if __name__ == "__main__":
-    main()

@@ -1,6 +1,6 @@
-RAG知识库与智能体问答系统
+# <center>RAG知识库与智能体问答系统</center>
 
-项目简介
+# 项目简介
 
 这是一个基于LangChain和LangGraph框架构建的RAG（检索增强生成）知识库与智能体问答系统。项目集成了文档检索、语义搜索和多轮对话能力，专门用于处理企业年度报告、研究文档等专业资料的知识问答任务。
 
@@ -15,7 +15,7 @@ RAG知识库与智能体问答系统
 
 • ⚡ 生产就绪：包含API服务、配置管理和完整部署结构
 
-技术架构
+# 技术架构
 
 核心技术栈
 
@@ -29,18 +29,18 @@ RAG知识库与智能体问答系统
 
 • Web框架：FastAPI（API服务）
 
-系统架构图
+# 系统架构图
 
-
+```
 项目结构基于有向图工作流设计：
 用户输入 → 文档检索 → 智能体处理 → 响应生成
     ↑          ↓          ↓          ↓
 状态管理 ← 条件分支 ← 工具调用 ← 模型推理
+```
 
+# 项目结构详解
 
-项目结构详解
-
-
+``` tree 
 RAG/
 ├── config/                 # 配置文件
 │   ├── appsettings.json   # 应用设置
@@ -69,9 +69,9 @@ RAG/
     ├── .env              # 环境变量
     ├── requirements.txt  # Python依赖
     └── README.md         # 项目说明
+```
 
-
-快速开始
+# 快速开始
 
 环境要求
 
@@ -103,7 +103,7 @@ SILICONFLOW_API_KEY=your_siliconflow_key
 
 
 
-运行系统
+#运行系统
 
 1. 启动主程序
 python main.py
@@ -141,14 +141,15 @@ python -m uvicorn main:app --reload
 
 3. 检索增强生成（RAG）
 
+```python
 # 示例检索流程
 query = "上海市场分析"
 results = vector_store.similarity_search(query, k=3)
+```
 
 
-
-使用方法
-
+## 使用方法
+``` python
 基本问答
 
 from src.knowlage_agent import KnowledgeAgentSystem
@@ -159,28 +160,30 @@ knowledge_system = KnowledgeAgentSystem("vector_db")
 # 进行问答
 response = knowledge_system.query("请分析聚灿光电2021年财务情况")
 print(response)
+```
 
-
-高级功能
+## 高级功能
 
 多轮对话支持
 
 系统支持基于LangGraph的多轮对话，保持对话上下文：
+```python
 # 第一次查询
 response1 = agent.query("什么是人工智能？")
 
 # 后续查询（保持上下文）
 response2 = agent.query("它在医疗领域有什么应用？")
-
+```
 
 工作流可视化与调试
 
 项目集成LangSmith进行工作流追踪和调试：
+```
 # 启动LangSmith监控
 langgraph dev --tunnel
+```
 
-
-性能优化
+## 性能优化
 
 检索优化
 
@@ -194,7 +197,7 @@ langgraph dev --tunnel
 
 使用LangChain的trim_messages工具管理对话长度，避免超出模型上下文限制。
 
-故障排除
+## 故障排除
 
 常见问题
 
@@ -214,7 +217,7 @@ langgraph dev --tunnel
    • 确保Python版本符合要求
 
 
-许可证
+# 许可证
 
 本项目采用MIT许可证。详见LICENSE文件。
 

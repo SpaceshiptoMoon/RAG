@@ -1,7 +1,222 @@
-'# Python异步爬虫教程\n\n## 1. 异步爬虫简介\n\n异步爬虫利用异步编程模型，能够同时处理多个网络请求，显著提高爬取效率。相比传统的同步爬虫，异步爬虫在I/O密集型任务中表现更优。\n\n## 2. 核心库介绍\n\n### 主要依赖库\n```python\nimport asyncio\nimport aiohttp\nfrom bs4 import BeautifulSoup\nimport time\nfrom typing import List, Dict, Optional\n```\n\n## 3. 基础异步爬虫示例\n\n### 简单的异步HTTP请求\n```python\nimport asyncio\nimport aiohttp\nimport time\n\nasync def fetch_url(session: aiohttp.ClientSession, url: str) -> str:\n    """异步获取网页内容"""\n    try:\n        async with session.get(url) as response:\n            return await response.text()\n    except Exception as e:\n        print(f"请求失败 {url}: {e}")\n        return ""\n\nasync def main():\n    urls = [\n        \'https://httpbin.org/delay/1\',\n        \'https://httpbin.org/delay/2\',\n        \'https://httpbin.org/delay/1\'\n    ]\n    \n    start_time = time.time()\n    \n    # 创建会话\n    async with aiohttp.ClientSession() as session:\n        # 并发执行所有请求\n        tasks = [fetch_url(session, url) for url in urls]\n        results = await asyncio.gather(*tasks)\n        \n        print(f"完成 {len(results)} 个请求")\n        print(f"耗时: {time.time() - start_time:.2f}秒")\n\n# 运行异步程序\nif __name__ == "__main__":\n    asyncio.run(main())\n```\n\n## 4. 完整的异步爬虫框架\n\n### 配置类\n```python\nclass CrawlerConfig:\n    """爬虫配置类"""\n    def __init__(self):\n        self.max_concurrent_requests = 10  # 最大并发请求数\n        self.request_timeout = 10          # 请求超时时间(秒)\n        self.retry_times = 3         
-      # 重试次数\n        self.delay_range = (0.5, 1.5)      # 请求间隔随机延迟范围\n        self.headers = {\n            \'User-Agent\': \'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\'\n        }\n        self.proxy = None                  # 代理设置\n        \n    def get_session_config(self):\n        """获取会话配置"""\n        return {\n            \'timeout\': aiohttp.ClientTimeout(total=self.request_timeout),\n            \'headers\': self.headers,\n            \'proxy\': self.proxy\n        }\n```\n\n### 异步爬虫核心类\n```python\nclass AsyncCrawler:\n    """异步爬虫核心类"""\n    \n    def __init__(self, config: CrawlerConfig):\n        self.config = config\n        self.session: Optional[aiohttp.ClientSession] = None\n        self.semaphore = asyncio.Semaphore(config.max_concurrent_requests)\n        \n    async def __aenter__(self):\n        """异步上下文管理器入口"""\n        self.session = aiohttp.ClientSession(**self.config.get_session_config())\n        return self\n        \n    async def __aexit__(self, exc_type, exc_val, exc_tb):\n        """异步上下文管理器出口"""\n        if self.session:\n            await self.session.close()\n            \n    async def _fetch_with_retry(self, url: str) -> Optional[str]:\n        """带重试机制的请求"""\n        for attempt in range(self.config.retry_times):\n            try:\n                async with self.semaphore:  # 控制并发\n                    async with self.session.get(url) as response:\n                       
- if response.status == 200:\n                            content = await response.text()\n                            \n                  
-          # 添加随机延迟\n                            delay = random.uniform(*self.config.delay_range)\n                            await asyncio.sleep(delay)\n                            \n                            return content\n                        else:\n           
-                 print(f"状态码错误 {url}: {response.status}")\n                            \n            except Exception as e:\n                print(f"第{attempt + 1}次尝试失败 {url}: {e}")\n                \n            # 重试前等待\n            if attempt < self.config.retry_times - 1:\n                wait_time = 2 ** attempt  # 指数退避\n                await asyncio.sleep(wait_time)\n                \n        return None\n        \n    async def crawl_urls(self, urls: List[str]) -> List[Dict]:\n        """批量爬取URL列表"""\n        tasks = [self._fetch_single_url(url) for url in urls]\n        results = await asyncio.gather(*tasks, return_exceptions=True)\n        \n        # 处理异常\n        valid_results = []\n        for result in results:\n            if isinstance(result, Exception):\n                print(f"请求异常: {result}")\n            elif result is not None:\n                valid_results.append(result)\n                \n        return valid_results\n        \n    async def _fetch_single_url(self, url: str) -> Optional[Dict]:\n        """爬取单个URL并解析"""\n        html = await self._fetch_with_retry(url)\n        if not html:\n            return None\n            \n        try:\n            soup = BeautifulSoup(html, \'html.parser\')\n            # 提取标题\n            title_tag = soup.find(\'title\')\n            title = title_tag.get_text().strip() if title_tag else "无标题"\n            \n            # 提取正文（示例）\n            paragraphs = soup.find_all(\'p\')\n            content = \' \'.join([p.get_text().strip() for p in paragraphs[:5]])\n            \n            return {\n                
-\'url\': url,\n                \'title\': title,\n                \'content\': content[:200] + \'...\' if len(content) > 200 else content,\n                \'timestamp\': time.time()\n            }\n            \n        except Exception as e:\n            print(f"解析失败 {url}: {e}")\n            return None\n```\n\n## 5. 实际应用示例\n\n### 爬取多个页面\n```python\nimport random\nimport asyncio\nfrom typing import List\n\nasync def demo_crawler():\n    """演示爬虫使用"""\n    # 配置爬虫\n    config = CrawlerConfig()\n    config.max_concurrent_requests = 5\n    config.delay_range = (0.1, 0.5)\n    \n    # 测试URL列表\n    urls = [\n        \'https://httpbin.org/html\',\n        \'https://httpbin.org/json\',\n        \'https://httpbin.org/xml\',\n        \'https://httpbin.org/robots.txt\',\n        \'https://httpbin.org/user-agent\',\n        \'https://httpbin.org/headers\',\n        \'https://httpbin.org/ip\',\n        \'https://httpbin.org/uuid\'\n    ] * 2  # 重复以增加数量\n    \n    start_time = time.time()\n    \n    async with AsyncCrawler(config) as crawler:\n        results = await crawler.crawl_urls(urls)\n        \n        print(f"\\n=== 爬取完成 ===")\n        print(f"成功爬取: {len(results)}/{len(urls)}")\n        print(f"总耗时: {time.time() - start_time:.2f}秒")\n        \n        # 显示结果\n        for i, result in enumerate(results[:5]):  # 只显示前5个\n            print(f"{i+1}. {result[\'title\']} - {result[\'url\']}")\n            \n    return results\n\n# 运行演示\nif __name__ == "__main__":\n    asyncio.run(demo_crawler())\n```\n\n## 6. 高级功能实现\n\n### 分页爬取\n```python\nclass PagedCrawler(AsyncCrawler):\n    """分页爬虫类"""\n    \n    async def crawl_pages(self, base_url: str, page_range: range) -> List[Dict]:\n        """爬取分页内容"""\n        urls = [f"{base_url}?page={page}" for page in page_range]\n        return await self.crawl_urls(urls)\n        \n    async def dynamic_crawl(self, seed_url: str, max_pages: int = 100) -> List[Dict]:\n        """动态爬取（发现新链接）"""\n        visited = set()\n        to_visit = {seed_url}\n        results = []\n        \n        while to_visit and len(visited) < max_pages:\n            current_url = to_visit.pop()\n            if current_url in visited:\n                continue\n                \n            visited.add(current_url)\n            \n            # 获取页面内容\n            html = await self._fetch_with_retry(current_url)\n            if not html:\n                continue\n                \n            # 解析并提取新链接\n            soup = BeautifulSoup(html, \'html.parser\')\n            links = soup.find_all(\'a\', href=True)\n            \n            for link in links:\n                href = link[\'href\']\n                # 相对路径转绝对路径\n                full_url = urllib.parse.urljoin(seed_url, href)\n                if full_url.startswith(seed_url) and full_url not in visited:\n                    to_visit.add(full_url)\n                    \n            # 处理当前页面\n            result = await self._fetch_single_url(current_url)\n            if result:\n                results.append(result)\n                
-\n        return results\n```\n\n### 数据存储\n```python\nimport json\nimport csv\nfrom datetime import datetime\n\nclass DataExporter:\n    """数据导出工具"""\n    \n    @staticmethod\n    def export_to_json(data: List[Dict], filename: str):\n        """导出为JSON文件"""\n        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")\n        filepath = f"{filename}_{timestamp}.json"\n        \n        with open(filepath, \'w\', encoding=\'utf-8\') as f:\n            json.dump(data, f, ensure_ascii=False, indent=2)\n            \n        print(f" 数据已保存到: {filepath}")\n        \n    @staticmethod\n    def export_to_csv(data: List[Dict], filename: str):\n        """导出为CSV文件"""\n        if not data:\n            return\n            \n        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")\n        filepath = f"{filename}_{timestamp}.csv"\n        \n        keys = data[0].keys()\n        with open(filepath, \'w\', newline=\'\', encoding=\'utf-8\') as f:\n            writer = csv.DictWriter(f, fieldnames=keys)\n            writer.writeheader()\n            writer.writerows(data)\n            \n        print(f"数据已保存到: {filepath}")\n```\n\n## 7. 注意事项和最佳实践\n\n### ⚠️ 重要注意事项\n\n#### 1. 合法性和道  德性\n```python\n# 始终遵守robots.txt规则\nimport urllib.robotparser\n\ndef check_robots_txt(base_url: str, user_agent: str = \'*\') -> bool:\n    """检查robots.txt"""\n    rp = urllib.robotparser.RobotFileParser()\n    rp.set_url(f"{base_url}/robots.txt")\n    rp.read()\n    return rp.can_fetch(user_agent, base_url)\n```\n\n#### 2. 速率限制\n```python\n# 使用信号量控制并发\nsemaphore = asyncio.Semaphore(10)  # 限制最大并发数\n\n# 添加随机延迟\nawait asyncio.sleep(random.uniform(0.5, 1.5))\n```\n\n#### 3. 错误处理\n```python\nasync def safe_request(session, url):\n    try:\n        async with session.get(url) as response:\n            response.raise_for_status()  # 检查HTTP状态码\n            return await response.text()\n    except aiohttp.ClientError as e:\n        print(f"客户端错误: {e}")\n    except asyncio.TimeoutError:\n        print("请求超时")\n    except Exception as e:\n        print(f"未知错误: {e}")\n    return None\n```\n\n### 🛡️ 安全和 反爬措施\n\n#### 用户代理轮换\n```python\nUSER_AGENTS = [\n    \'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\',\n    \'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36\',\n    \'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36\'\n]\n\ndef get_random_user_agent():\n    return random.choice(USER_AGENTS)\n```\n\n#### 代理池\n```python\nclass ProxyPool:\n    """代理池管理"""\n    def __init__(self, proxies: List[str]):\n        self.proxies = proxies\n        self.current_index = 0\n        \n    def get_next_proxy(self) -> Optional[str]:\n        if not self.proxies:\n            return None\n        proxy = self.proxies[self.current_index]\n        self.current_index = (self.current_index + 1) % len(self.proxies)\n        return proxy\n```\n\n### 📊 性能优化建议\n\n1. **连接复用**：始终使用`ClientSession`\n2. **适当并发**：根据目标服务器承受能力调整\n3. **缓存机制**：避免重复请求相同内容\n4. **资源清理**：及时关闭会话和连接\n\n### 🔧 调试技巧\n\n```python\n# 启用详细日志\nimport logging\nlogging.basicConfig(level=logging.DEBUG)\n\n# 监控性能\nstart = time.time()\n# ... 爬虫代码 ...\nprint(f"耗时: {time.time() - start:.2f}s")\n```\n\n## 8. 完整示例：新闻网站爬取\n\n```python\nasync def main_news_crawler():\n    """新闻网站爬取示例"""\n    config = CrawlerConfig()\n    config.max_concurrent_requests = 3\n    config.headers.update({\n        \'User-Agent\': \'Mozilla/5.0 (compatible; NewsBot/1.0)\'\n    })\n    \n    news_urls = [\n        \'https://example-news.com/article/1\',\n        \'https://example-news.com/article/2\',\n        # ... 更多URL\n    ]\n    \n    async with AsyncCrawler(config) as crawler:\n        results = await crawler.crawl_urls(news_urls)\n        \n        # 导出数据\n        exporter = DataExporter()\n        exporter.export_to_json(results, "news_data")\n        exporter.export_to_csv(results, "news_data")\n\n# 运行\nif __name__ == "__main__":\n    asyncio.run(main_news_crawler())\n```\n\n## 总结\n\n异步爬虫的优势：\n- ✅ 高效利用网络I/O\n- ✅ 显著提升爬取速度\n- ✅ 资源利用率高\n\n使用建议：\n- 遵守网站规则和法律法规\n- 合理设置请求频率\n- 做好错误处理和重试机制\n- 监控系统资源使用情况\n\n通过合理使用异步爬虫，可以高效地完成大规模数据采集任务，但务必注意合法合规使用。'
+RAG知识库与智能体问答系统
+
+项目简介
+
+这是一个基于LangChain和LangGraph框架构建的RAG（检索增强生成）知识库与智能体问答系统。项目集成了文档检索、语义搜索和多轮对话能力，专门用于处理企业年度报告、研究文档等专业资料的知识问答任务。
+
+核心特性：
+• 📚 多格式文档支持：支持PDF、TXT、Markdown等格式的文档处理
+
+• 🔍 语义检索：基于向量数据库的智能相似度搜索
+
+• 🤖 智能体对话：采用LangGraph构建的多轮对话工作流
+
+• 🧠 上下文记忆：保持对话历史，实现连贯的多轮交互
+
+• ⚡ 生产就绪：包含API服务、配置管理和完整部署结构
+
+技术架构
+
+核心技术栈
+
+• 框架：LangChain + LangGraph（工作流编排）
+
+• 语言模型：支持多种LLM接口（配置于src/models/）
+
+• 向量数据库：ChromaDB（持久化存储）
+
+• 文档处理：LangChain文档加载与文本分割
+
+• Web框架：FastAPI（API服务）
+
+系统架构图
+
+
+项目结构基于有向图工作流设计：
+用户输入 → 文档检索 → 智能体处理 → 响应生成
+    ↑          ↓          ↓          ↓
+状态管理 ← 条件分支 ← 工具调用 ← 模型推理
+
+
+项目结构详解
+
+
+RAG/
+├── config/                 # 配置文件
+│   ├── appsettings.json   # 应用设置
+│   └── config.py          # 配置管理
+├── data/                  # 文档数据源
+│   ├── *.pdf             # 企业年度报告
+│   └── research_report_*.md # 研究报告
+├── src/                   # 核心源代码
+│   ├── agent/            # 智能体实现
+│   │   ├── agent.py      # 主智能体
+│   │   ├── router_agent.py # 路由智能体
+│   │   └── tools.py      # 工具函数
+│   ├── docs_read/        # 文档读取模块
+│   ├── models/           # 模型配置
+│   │   ├── embedding.py  # 嵌入模型
+│   │   └── llm.py        # 语言模型
+│   ├── prompt/           # 提示词模板
+│   ├── utils/            # 工具函数
+│   ├── vector/           # 向量数据库
+│   └── knowlage_agent.py # 知识代理入口
+├── serve/                # API服务层
+│   └── routers/          # API路由
+├── vector_db/            # 向量数据库存储
+│   └── chroma.sqlite3    # ChromaDB数据库文件
+└── 配置文件
+    ├── .env              # 环境变量
+    ├── requirements.txt  # Python依赖
+    └── README.md         # 项目说明
+
+
+快速开始
+
+环境要求
+
+• Python 3.11+（LangGraph要求）
+
+• 必要的API密钥（在.env文件中配置）
+
+安装步骤
+
+1. 克隆项目
+git clone <项目地址>
+cd RAG
+
+
+2. 创建虚拟环境
+conda create -n rag python=3.12
+conda activate rag
+
+
+3. 安装依赖
+pip install -r requirements.txt
+
+
+4. 配置环境变量
+在.env文件中配置必要的API密钥：
+
+OPENAI_API_KEY=your_openai_key
+SILICONFLOW_API_KEY=your_siliconflow_key
+
+
+
+运行系统
+
+1. 启动主程序
+python main.py
+
+
+2. 测试系统
+python test.py
+
+
+3. 启动API服务
+cd serve
+python -m uvicorn main:app --reload
+
+
+核心功能说明
+
+1. 文档处理流水线
+
+• 自动文档解析：支持多种格式的文档解析和文本提取
+
+• 智能文本分割：根据语义进行合理的文本分块
+
+• 向量化存储：将文本转换为向量并存入ChromaDB
+
+2. 智能体工作流
+
+系统采用LangGraph构建的有状态工作流，包含以下核心节点：
+• 意图识别：分析用户问题意图
+
+• 文档检索：从向量数据库检索相关文档
+
+• 响应生成：基于检索结果生成回答
+
+• 状态管理：维护对话上下文和记忆
+
+3. 检索增强生成（RAG）
+
+# 示例检索流程
+query = "上海市场分析"
+results = vector_store.similarity_search(query, k=3)
+
+
+
+使用方法
+
+基本问答
+
+from src.knowlage_agent import KnowledgeAgentSystem
+
+# 初始化系统
+knowledge_system = KnowledgeAgentSystem("vector_db")
+
+# 进行问答
+response = knowledge_system.query("请分析聚灿光电2021年财务情况")
+print(response)
+
+
+高级功能
+
+多轮对话支持
+
+系统支持基于LangGraph的多轮对话，保持对话上下文：
+# 第一次查询
+response1 = agent.query("什么是人工智能？")
+
+# 后续查询（保持上下文）
+response2 = agent.query("它在医疗领域有什么应用？")
+
+
+工作流可视化与调试
+
+项目集成LangSmith进行工作流追踪和调试：
+# 启动LangSmith监控
+langgraph dev --tunnel
+
+
+性能优化
+
+检索优化
+
+• 相似度阈值：设置最小相似度分数过滤无关结果
+
+• 分块策略优化：根据文档类型调整文本分块大小
+
+• 索引优化：定期优化向量数据库索引
+
+对话长度管理
+
+使用LangChain的trim_messages工具管理对话长度，避免超出模型上下文限制。
+
+故障排除
+
+常见问题
+
+1. 向量数据库连接失败
+   • 检查vector_db目录权限
+
+   • 确认ChromaDB服务正常运行
+
+2. API密钥错误
+   • 验证.env文件中的API密钥配置
+
+   • 检查网络连接和API服务状态
+
+3. 依赖冲突
+   • 使用虚拟环境隔离项目依赖
+
+   • 确保Python版本符合要求
+
+
+许可证
+
+本项目采用MIT许可证。详见LICENSE文件。
+
+
+本项目基于LangChain和LangGraph框架构建，充分利用了现代AI技术栈的优势。

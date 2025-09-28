@@ -33,12 +33,6 @@ class KnowledgeAgentSystem:
         
         self.router = QueryRouter(llm)
         
-        # 初始化向量存储
-        try:
-            self.vectorizer.vector_store = self.vectorizer._initialize_vector_store()
-            logger.info("知识问答系统初始化成功")
-        except Exception as e:
-            logger.warning(f"向量存储初始化失败: {e}, 系统将继续运行但RAG功能受限")
     
     def process_query(self, question: str, top_k: int = 5) -> Dict[str, Any]:
         """

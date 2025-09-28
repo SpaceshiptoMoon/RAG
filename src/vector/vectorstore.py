@@ -39,8 +39,9 @@ class DocumentVectorizer:
         self.embeddings = self._initialize_embeddings()
         self.vector_store = Chroma(
                     persist_directory=self.vector_store_path,
-                    embedding_function=self.embeddings
+                    embedding_function=self.embeddings,
                 )
+        
              
     def __init_doc_operater(self, path):
         return ReadFiles(path)
@@ -128,7 +129,8 @@ class DocumentVectorizer:
             try:
                 self.vector_store = Chroma(
                     persist_directory=self.vector_store_path,
-                    embedding_function=self.embeddings
+                    embedding_function=self.embeddings,
+                    collection_name='langchain'
                 )
                 logger.info("加载现有向量数据库成功")
             except:
@@ -278,7 +280,7 @@ class DocumentVectorizer:
             logger.warning("使用内存中的临时向量存储作为备用方案")
             self.vector_store = Chroma(
                 embedding_function=self.embeddings,
-                collection_name=collection_name
+                collection_name=collection_name,
             )
             return self.vector_store
 

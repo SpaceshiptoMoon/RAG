@@ -58,7 +58,7 @@ async def startup_event():
     """应用启动初始化"""
     global knowledge_system
     try:
-        vector_store_path = "vector_db"  # 可配置化
+        vector_store_path = "./vector_db"  # 可配置化
         knowledge_system = KnowledgeAgentSystem(vector_store_path)
         logger.info("知识问答系统启动成功")
     except Exception as e:
@@ -78,9 +78,6 @@ async def query_knowledge(request: QueryRequest):
     try:
         if not knowledge_system:
             raise HTTPException(status_code=503, detail="系统未就绪")
-        
-        test_results = knowledge_system.vectorizer.vector_store.similarity_search("上海", k=3)
-        print(f"测试查询结果数量: {len(test_results)}")
         
         result = knowledge_system.process_query(
             question=request.question,

@@ -4,11 +4,10 @@ vector.py - 文档向量化与向量存储模块
 支持格式：txt, pdf, docx等
 """
 
-import os
+
 import time
 import logging
 from typing import List, Optional, Union
-from tenacity import retry, wait_exponential, stop_after_attempt
 from langchain_core.documents.base import Document
 from dotenv import load_dotenv
 

@@ -1,177 +1,261 @@
 import os
-from openai import OpenAI
-import matplotlib.pyplot as plt
-import numpy as np
-from typing import Dict, List, Optional, Tuple, Union
-from transformers import AutoTokenizer, AutoModel
-from abc import ABC
-import PyPDF2
-import markdown
-import html2text
-import json
-from tqdm import tqdm
-import tiktoken
-import re
-from bs4 import BeautifulSoup
-from IPython.display import display, Code, Markdown
-import random
-import torch
-from abc import ABC, abstractmethod
-from typing import List, Optional
-import numpy as np
+import logging
+from typing import List, Dict, Any, Optional
+from functools import lru_cache
 from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
+load_dotenv()
 
-class BaseEmbeddings(ABC):
-    """向量化基类，用于将文本转化为向量表示。子类需实现具体向量化逻辑。
-
-    特性：
-        - 强制子类实现 `get_embedding` 方法（抽象方法）
-        - 提供通用的余弦相似度计算工具方法
-        - 支持本地模型与API模式切换
+class EmbeddingClient:
     """
-    def __init__(self, path: Optional[str] = None, is_api: bool = False) -> None:
-        """初始化向量化工具
-        
-        Args:
-            path: 模型路径（本地模式必需，API模式可选）
-            is_api: 是否使用API模式（默认False）
+    嵌入模型客户端
+    支持多种嵌入模型，提供缓存、监控、错误处理等企业级功能
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        self.path = path
-        self.is_api = is_api
-
-    @abstractmethod
-    def get_embedding(self, text: str, model: str) -> List[float]:
-        """获取文本的向量表示（子类必须实现）
+        初始化嵌入模型客户端
         
         Args:
-            text: 待向量化的文本
-            model: 使用的模型标识符
+            config: 配置字典，包含模型类型、参数等
+        """
+        # 统一配置：用户传入优先，其余从环境变量补齐；键保持统一标准
+        self.config = self._merge_with_env(config)
+        self.logger = self._setup_logging()
+        self.embedding_model = None
+        self.cache_enabled = self.config.get('enable_cache', True)
+        self._initialize_model()
+        
+
+    def _merge_with_env(self, user_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """将用户传入配置与环境变量配置合并，形成统一键的配置。
+        统一键约定（仅使用以下环境变量）：
+          - enable_cache: False
+        """
+        env_cfg = self._load_config_from_env()
+        # 仅允许少量可选覆盖（保持同一键名）
+        merged = {**env_cfg, **({} if user_config is None else user_config)}
+        return merged
+
+    def _load_config_from_env(self) -> Dict[str, Any]:
+        """从环境变量加载统一的嵌入模型配置。
+        仅使用以下环境变量：
+          - EMBED_PROVIDER: openai/qwen/siliconflow/ollama
+          - EMBED_MODEL: 模型名称
+          - EMBED_API_KEY: API 密钥（ollama 不需要）
+          - EMBED_BASE_URL: 可选，覆盖默认 base_url
+        """
+        provider = (os.getenv('EMBED_PROVIDER') or 'openai').lower()
+        model_name = os.getenv('EMBED_MODEL') or 'text-embedding-3-small'
+        api_key = os.getenv('EMBED_API_KEY')
+        env_base_url = os.getenv('EMBED_BASE_URL')
+
+
+        return {
+            'model_type': provider,
+            'model_name': model_name,
+            'api_key': api_key,
+            'base_url': env_base_url
+        }
+    
+    def _setup_logging(self) -> logging.Logger:
+        """配置日志系统"""
+        logger = logging.getLogger(f"EmbeddingClient")
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(model_type)s] - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+        return logger
+
+    def _initialize_model(self):
+        """根据配置初始化嵌入模型（仅支持 openai/qwen/siliconflow/ollama）。"""
+        model_type = self.config.get('model_type', 'openai').lower()
+        try:
+            if model_type == 'openai':
+                self.embedding_model = self._init_openai()
+            elif model_type == 'qwen':
+                self.embedding_model = self._init_qwen()
+            elif model_type == 'siliconflow':
+                self.embedding_model = self._init_siliconflow()
+            elif model_type == 'ollama':
+                self.embedding_model = self._init_ollama()
+            else:
+                raise ValueError(f"不支持的模型类型: {model_type}")
+
+            self.logger.info(f"成功初始化 {model_type} 嵌入模型", extra={'model_type': model_type})
+        except Exception as e:
+            self.logger.error(f"模型初始化失败: {str(e)}", extra={'model_type': model_type})
+            raise
+
+    def _init_openai(self) -> OpenAIEmbeddings:
+        """初始化 OpenAI 官方或兼容接口（默认）。"""
+        return OpenAIEmbeddings(
+            model=self.config.get('model_name', 'text-embedding-3-small'),
+            base_url=self.config.get('base_url'),
+            openai_api_key=self.config.get('api_key')
+        )
+    
+    def _init_qwen(self) -> OpenAIEmbeddings:
+        """使用阿里 Qwen 的 OpenAI 兼容接口。"""
+        return OpenAIEmbeddings(
+            model=self.config.get('model_name', 'text-embedding-3-small'),
+            base_url=self.config.get('base_url'),
+            openai_api_key=self.config.get('api_key')
+        )
+    def _init_siliconflow(self) -> OpenAIEmbeddings:
+        """使用 SiliconFlow 的 OpenAI 兼容接口。"""
+        return OpenAIEmbeddings(
+            model=self.config.get('model_name', 'text-embedding-3-small'),
+            base_url=self.config.get('base_url'),
+            openai_api_key=self.config.get('api_key')
+        )
+
+    def _init_ollama(self) -> OpenAIEmbeddings:
+        """使用 OpenAIEmbeddings 连接到 Ollama 的 OpenAI 兼容接口。"""
+        return OpenAIEmbeddings(
+            model=self.config.get('model_name', 'nomic-embed-text'),
+            base_url=self.config.get('base_url'),
+            openai_api_key=self.config.get('api_key')  # 允许为空
+        )
+
+
+    @lru_cache(maxsize=1000)
+    def _cached_embed_query(self, text: str) -> List[float]:
+        """带缓存的查询嵌入"""
+        return self.embedding_model.embed_query(text)
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """
+        嵌入文档列表（批量处理）
+        
+        Args:
+            texts: 文本列表
             
         Returns:
-            文本对应的向量（浮点数列表）
-            
-        Raises:
-            NotImplementedError: 子类未实现时抛出
+            List[List[float]]: 向量列表
         """
-        pass  
+        try:
+            self.logger.info(f"开始嵌入 {len(texts)} 个文档", 
+                           extra={'model_type': self.config.get('model_type')})
+            
+            if not texts:
+                return []
+            
+            # 批量嵌入处理
+            embeddings = self.embedding_model.embed_documents(texts)
+            
+            self.logger.info(f"文档嵌入完成，生成 {len(embeddings)} 个向量", 
+                           extra={'model_type': self.config.get('model_type')})
+            return embeddings
+            
+        except Exception as e:
+            self.logger.error(f"文档嵌入失败: {str(e)}", 
+                           extra={'model_type': self.config.get('model_type')})
+            raise
 
-    @classmethod
-    def cosine_similarity(cls, vector1: List[float], vector2: List[float]) -> float:
-        """计算两个向量的余弦相似度（工具方法）
+    def embed_query(self, text: str) -> List[float]:
+        """
+        嵌入查询文本（支持缓存）
         
         Args:
-            vector1: 第一个向量
-            vector2: 第二个向量
+            text: 查询文本
             
         Returns:
-            相似度值（范围[-1, 1]）
+            List[float]: 向量
         """
-        dot_product = np.dot(vector1, vector2)
-        magnitude = np.linalg.norm(vector1) * np.linalg.norm(vector2)
-        return dot_product / magnitude if magnitude else 0.0
-    
-class API_Embedding(BaseEmbeddings):
-    """
-    使用 OpenAI 的 Embedding API 来获取文本向量的类， 继承自 BaseEmbeddings。
-    """
-    def __init__(self, is_api:bool = False, is_ollama:bool = True) -> None:
-        """初始化类， 设置OpenAI API 客户端， 如果使用的是API调用。
-        
-        参数：
-        path (str) - 本地模型的路径，使用API时可以为空
-        is_api (bool) - 是否通过 API 获取 Embedding， 默认为 True
+        try:
+            if self.cache_enabled:
+                return self._cached_embed_query(text)
+            else:
+                return self.embedding_model.embed_query(text)
+                
+        except Exception as e:
+            self.logger.error(f"查询嵌入失败: {str(e)}", 
+                           extra={'model_type': self.config.get('model_type')})
+            raise
+
+    def get_dimension(self) -> int:
         """
-        super().__init__(is_api=is_api)
-        if self.is_api & is_ollama:
-            raise ValueError("is_api和is_ollama不能同时为True！")
+        获取向量维度
         
-        load_dotenv()
+        Returns:
+            int: 向量维度
+        """
+        # 测试嵌入一个短文本来获取维度
+        try:
+            test_text = "test"
+            embedding = self.embed_query(test_text)
+            return len(embedding)
+        except:
+            # 返回常见默认维度
+            return 768
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """获取模型信息"""
+        return {
+            'model_type': self.config.get('model_type'),
+            'dimension': self.get_dimension(),
+            'config': {k: v for k, v in self.config.items() if k != 'api_key'}
+        }
+
+    def batch_embed_with_progress(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
+        """
+        带进度批处理的嵌入方法
         
-        if self.is_api:
-            # 初始化 OpenAI API 客户端
-            from openai import OpenAI
-            self.client = OpenAI()
-            self.client.api_key = os.getenv("OPENAI_AI_EMBEDDING_KEY")
-            self.client.base_url = os.getenv("OPENAI_BASE_URL")
-            self.model_name = os.getenv("OPENAI_EMBEDDING_MODEL_NAME")
+        Args:
+            texts: 文本列表
+            batch_size: 批处理大小
             
-        if is_ollama:
-            # 初始化嵌入模型
-            from langchain_community.embeddings import OllamaEmbeddings
-            self.is_ollama = is_ollama
-            self.embeddings = OllamaEmbeddings()
-            self.embeddings.base_url = os.getenv("OLLAMA_BASE_URL")
-            self.embeddings.model = os.getenv("OLLAMA_EMBEDDING_MODEL_NAME")
-             
-    def get_embedding(self, text: str) -> List[float]:
-        """使用 OpenAI 的 Embedding API 获取文本的向量表示。
-        
-        参数：
-        text (str) - 需要转化为向量的文本
-        
-        返回：
-        list[float] - 文本的向量表示
+        Returns:
+            List[List[float]]: 向量列表
         """
-        if self.is_api:
-            # 去掉文本的换行符
-            text.replace('\n', '')
-            # 调用 OpenAI API 获取文本的向量表示
-            return self.client.embeddings.create(inpute=[text], model=self.model_name).data[0].embedding
+        all_embeddings = []
+        total_batches = (len(texts) + batch_size - 1) // batch_size
         
-        elif self.is_ollama:
-            # 去掉文本的换行符
-            text.replace('\n', '')
-            return self.embeddings.embed_query(text)
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
+            batch_embeddings = self.embed_documents(batch_texts)
+            all_embeddings.extend(batch_embeddings)
+            
+            # 记录进度
+            current_batch = (i // batch_size) + 1
+            self.logger.info(f"处理进度: {current_batch}/{total_batches}", 
+                           extra={'model_type': self.config.get('model_type')})
+        
+        return all_embeddings
+
+
+class EmbeddingModelFactory:
+    """嵌入模型工厂类"""
     
-class Local_Embedding(BaseEmbeddings):
-    """
-    使用 OpenAI 的 Embedding API 来获取文本向量的类， 继承自 BaseEmbeddings。
-    """
-    def __init__(self, path: str = '') -> None:
-        """初始化类， 设置OpenAI API 客户端， 如果使用的是API调用。
-        
-        参数：
-        path (str) - 本地模型的路径，使用API时可以为空
+    @staticmethod
+    def create_model(config: Dict[str, Any]) -> EmbeddingClient:
         """
-        super().__init__(path=path)
-        self.path = path 
-        self.model = AutoModel.from_pretrained(self.path)
-        self.tokenizer = AutoTokenizer.from_pretrained(self.path)
-    
-    def get_embedding(self, text: str) -> List[float]:
-        """使用 OpenAI 的 Embedding API 获取文本的向量表示。
+        创建嵌入模型实例
         
-        参数：
-        text (str) - 需要转化为向量的文本
-        
-        返回：
-        list[float] - 文本的向量表示
+        Args:
+            config: 模型配置
+            
+        Returns:
+            EmbeddingClient: 嵌入模型客户端实例
         """
-        input = self.tokenizer(text)
-        with torch.no_grad():
-            output = self.model(**input)
-        return output
+        return EmbeddingClient(config)
+    
+    @staticmethod
+    def get_available_models() -> Dict[str, List[str]]:
+        """获取受支持的模型类型列表（精简版）。"""
+        return {
+            "supported": ["openai", "qwen", "siliconflow", "ollama"]
+        }
 
-if __name__ == '__main__':
-    embedding = API_Embedding(is_ollama = True)
-    vector1 = embedding.get_embedding('我爱吃水果')
-    vector2 = embedding.get_embedding('苹果我每天都吃，还会吃橘子')
-    similarity_rate = embedding.cosine_similarity(vector1, vector2)
-    print(similarity_rate)
-    
 
-        
-        
-        
-
-    
-    
-        
-        
-        
-        
-        
-        
-        
-        
-    
+if __name__ == "__main__":
+    # 简要示例：从环境变量加载并创建
+    config = {'enable_cache': True}
+    client = EmbeddingModelFactory.create_model(config)
+    print(client.get_model_info())
+    print(client.embed_query("这是一个测试"))

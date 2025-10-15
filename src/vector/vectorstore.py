@@ -4,7 +4,7 @@ vector.py - 文档向量化与向量存储模块
 支持格式：txt, pdf, docx等
 """
 
-
+import os
 import time
 import logging
 from typing import List, Optional, Union
@@ -25,8 +25,8 @@ class DocumentVectorizer:
     def __init__(self,
                  collection_name: str = "documents_collection",
                  embedding_config: Optional[dict] = None,
-                 milvus_host: str = "localhost",
-                 milvus_port: Union[str, int] = 19530,
+                 milvus_host: str = os.getenv("MILVUS_HOST", "127.0.0.1"),
+                 milvus_port: Union[str, int] = os.getenv("MILVUS_PORT", "19530​"),
                  ):
         """
         初始化向量化处理器
@@ -40,8 +40,8 @@ class DocumentVectorizer:
         self.collection_name = collection_name
         # 默认嵌入模型配置（可被用户传入配置覆盖）
         self.embedding_config = embedding_config or {
-            "model_type": "huggingface",
-            "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+            "model_type": "siliconflow",
+            "model_name": "BAAI/bge-m3",
             "enable_cache": True,
         }
 
@@ -144,62 +144,6 @@ class DocumentVectorizer:
         except Exception as e:
             logger.error(f"添加文档失败: {e}")
             raise
-    
-    def process_document(self, file_path: str, is_text: str = True, add_to_existing: bool = True, batch_size: int = 30) -> bool:
-        """
-        处理单个文档的完整流程
-        
-        Args:
-            file_path: 文档路径
-            is_text: 是否为文本类型
-            add_to_existing: 是否添加到现有数据库
-            batch_size: 嵌入模型每次处理的chunk大小
-            
-        Returns:
-            处理是否成功
-        """
-        try:
-            # 确保批次大小不超过API限制
-            if batch_size > 64:
-                logger.warning(f"批次大小 {batch_size} 超过API限制(64)，已自动调整为64")
-                batch_size = 64
-                
-            # 1. 加载文档操作器
-            documents_operater = self.__init_doc_operater(file_path)
-            
-            # 2. 分割文档
-            symbol_chunks = documents_operater.get_symbol_content()
-            token_chunks = documents_operater.get_content()
-            
-            if is_text:
-                symbol_chunks = self.txt_to_Document(symbol_chunks)
-                token_chunks = self.txt_to_Document(token_chunks)
-                
-            chunks = token_chunks + symbol_chunks 
-            
-            # 3. 创建或更新向量数据库         
-            total_chunks  = len(chunks)
-    
-            for i in range(0, total_chunks , batch_size):
-                batch = chunks[i:i + batch_size]
-
-                logger.info(f"正在处理批次 {i//batch_size + 1}/{(total_chunks-1)//batch_size + 1} ({len(batch)}个文本块)")
-                
-                
-                if add_to_existing:
-                    self.add_to_existing_store(batch)
-                else:
-                    self.create_vector_store(batch)
-                
-                time.sleep(2)
-            
-            logger.info(f"文档处理完成: {file_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"文档处理失败 {file_path}: {e}")
-            return False
-    
     def query_similarity(self, query: str, top_k: int = 5) -> List:
         """
         查询相似文档
@@ -214,7 +158,7 @@ class DocumentVectorizer:
         try:
             query_vector = self.embedding_client.embed_query(query)
             # milvus.search expects a list of vectors
-            results = self.milvus.search(self.collection_name, [query_vector], top_k=top_k)
+            results = self.milvus.search(self.collection_name, [query_vector], top_k=top_k, fields=['text', 'metadata'])
             logger.info(f"相似度查询完成，返回 {len(results)} 个结果")
             return results
         except Exception as e:
@@ -237,3 +181,145 @@ class DocumentVectorizer:
         except Exception as e:
             logger.error(f"向量数据库初始化失败: {e}")
 
+    def process_document_enhanced(self, file_path: str, is_text: bool = True, 
+                                add_to_existing: bool = True, batch_size: int = 30) -> bool:
+        """
+        处理单个文档的完整流程（适配新版insert方法）
+        
+        Args:
+            file_path: 文档路径
+            is_text: 是否为文本类型
+            add_to_existing: 是否添加到现有数据库
+            batch_size: 每批处理的chunk数量
+            
+        Returns:
+            处理是否成功
+        """
+        try:
+            # 确保批次大小合理（可根据您的嵌入模型API限制调整）
+            if batch_size > 64:
+                logger.warning(f"批次大小 {batch_size} 超过推荐值(64)，已自动调整为64")
+                batch_size = 64
+                
+            # 1. 加载文档并分割
+            documents_operater = self.__init_doc_operater(file_path)
+            symbol_chunks = documents_operater.get_symbol_content()
+            token_chunks = documents_operater.get_content()
+            
+            if is_text:
+                symbol_chunks = self.txt_to_Document(symbol_chunks)
+                token_chunks = self.txt_to_Document(token_chunks)
+                
+            chunks = token_chunks + symbol_chunks
+            total_chunks = len(chunks)
+            
+            if total_chunks == 0:
+                logger.warning(f"文档 {file_path} 未提取到有效内容")
+                return False
+            
+            logger.info(f"开始处理文档: {file_path}, 共 {total_chunks} 个文本块")
+            
+            # 2. 分批处理
+            successful_batches = 0
+            for batch_index, i in enumerate(range(0, total_chunks, batch_size)):
+                batch_chunks = chunks[i:i + batch_size]
+                current_batch_size = len(batch_chunks)
+                
+                logger.info(f"处理批次 {batch_index + 1}/{(total_chunks-1)//batch_size + 1} ({current_batch_size}个文本块)")
+                
+                try:
+                    # 关键适配步骤：准备插入数据
+                    # a. 为批次生成唯一ID（幂等性保障）
+                    batch_ids = self._generate_batch_ids(file_path, i, current_batch_size)
+                    
+                    # b. 将文本块转换为向量
+                    vectors = self.embedding_client.batch_embed_with_progress(batch_chunks)
+                    
+                    # c. 准备元数据
+                    metadatas = self._prepare_metadatas(file_path, batch_chunks, i)
+                    
+                    # 确定目标集合名称
+                    collection_name = self._get_target_collection_name(add_to_existing)
+                    
+                    # 3. 调用新的insert方法
+                    if add_to_existing:
+                        # 添加到现有集合
+                        result_ids = self.insert(
+                            collection_name=collection_name,
+                            vectors=vectors,
+                            texts=batch_chunks,  # 直接使用文本内容
+                            metadatas=metadatas,
+                            ids=batch_ids,  # 传入幂等性ID
+                            max_retries=3
+                        )
+                    else:
+                        # 创建新集合（需要先创建集合，这里假设有相应方法）
+                        self.create_vector_store(collection_name, len(vectors[0]))
+                        result_ids = self.insert(
+                            collection_name=collection_name,
+                            vectors=vectors,
+                            texts=batch_chunks,
+                            metadatas=metadatas,
+                            ids=batch_ids,
+                            max_retries=3
+                        )
+                    
+                    if result_ids and len(result_ids) == current_batch_size:
+                        successful_batches += 1
+                        logger.debug(f"批次 {batch_index + 1} 插入成功，获得 {len(result_ids)} 个ID")
+                    else:
+                        logger.warning(f"批次 {batch_index + 1} 插入结果ID数量不匹配")
+                        
+                except Exception as batch_error:
+                    logger.error(f"批次 {batch_index + 1} 处理失败: {batch_error}")
+                    # 可以选择继续处理后续批次而不是立即失败
+                    continue
+                    
+                # 控制处理速率
+                time.sleep(1)  # 可根据需要调整
+            
+            logger.info(f"文档处理完成: {file_path}. 成功处理 {successful_batches} 个批次")
+            return successful_batches > 0  # 至少有一个批次成功即视为整体成功
+            
+        except Exception as e:
+            logger.error(f"文档处理失败 {file_path}: {e}")
+            return False
+
+    def _generate_batch_ids(self, file_path: str, start_index: int, batch_size: int) -> List[str]:
+        """
+        为批次生成唯一ID（幂等性关键）
+        
+        格式: {file_hash}_{chunk_start_index}_{chunk_index}
+        示例: "abc123_0_0", "abc123_0_1", ...
+        """
+        import hashlib
+        file_hash = hashlib.md5(file_path.encode()).hexdigest()[:8]
+        
+        ids = []
+        for j in range(batch_size):
+            # 全局唯一的ID：文件指纹 + 起始偏移 + 批次内索引
+            chunk_id = f"{file_hash}_{start_index}_{j}"
+            ids.append(chunk_id)
+        
+        return ids
+
+    def _prepare_metadatas(self, file_path: str, chunks: List[str], start_index: int) -> List[Dict[str, Any]]:
+        """准备元数据列表"""
+        metadatas = []
+        for j, chunk in enumerate(chunks):
+            metadata = {
+                "source_file": file_path,
+                "chunk_index": start_index + j,
+                "chunk_length": len(chunk),
+                "timestamp": time.time()
+            }
+            metadatas.append(metadata)
+        return metadatas
+
+    def _get_target_collection_name(self, add_to_existing: bool) -> str:
+        """获取目标集合名称"""
+        if add_to_existing:
+            return "your_existing_collection_name"  # 替换为您的实际集合名
+        else:
+            # 可以基于时间戳或文档名生成新集合名
+            return f"doc_collection_{int(time.time())}"

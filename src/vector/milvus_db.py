@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 import json
 from typing import List, Dict, Any, Optional, Union
@@ -28,7 +29,7 @@ class MilvusManager:
     - metadata 存为 JSON 字符串
     """
 
-    def __init__(self, host: str , port: int , alias: str = "default"):
+    def __init__(self, host: str = None, port: int = None, alias: str = "default"):
         """
         初始化 MilvusManager 实例。
 
@@ -40,10 +41,12 @@ class MilvusManager:
         Returns:
             None: 不返回值，完成对象初始化。
         """
+        load_dotenv()
         self.host = host if host else os.getenv("MILVUS_HOST", "127.0.0.1")
         self.port = port if port else int(os.getenv("MILVUS_PORT", 19530))
         self.alias = alias
         self._logger = self._setup_logger()
+        self.connect()
 
     def _setup_logger(self) -> logging.Logger:
         """
@@ -197,30 +200,43 @@ class MilvusManager:
 
     def get_collection_stats(self, name: str) -> Dict[str, Any]:
         """
-        获取集合的统计信息。
-
-        Args:
-            name: 集合名称。
-
-        Returns:
-            Dict[str, Any]: 包含集合名称、实体数量（num_entities）和分区信息（partitions）的字典。
+        获取集合的统计信息（兼容版本）。
         """
-        coll = self.get_collection(name)
-        stats = utility.get_collection_stats(name, using=self.alias)
-        return {
-            "name": name,
-            "num_entities": coll.num_entities,
-            "partitions": stats.get("partitions", []),
-        }
+        try:
+            coll = self.get_collection(name)
+            
+            # 使用 Collection 对象自身的属性获取统计信息
+            stats = {
+                "name": name,
+                "num_entities": coll.num_entities,  # 实体数量
+                "schema": coll.schema,  # 集合模式
+                "description": coll.description,  # 集合描述
+                "is_empty": coll.is_empty,  # 是否为空
+                "primary_field": coll.primary_field,  # 主键字段
+                "partitions": coll.partitions,  # 分区信息
+            }
+            return stats
+            
+        except Exception as e:
+            self._logger.error(f"获取集合统计信息失败: {e}")
+            # 返回基础信息作为备选
+            return {
+                "name": name,
+                "num_entities": coll.num_entities if 'coll' in locals() else 0,
+                "partitions": [],
+                "error": str(e)
+            }
 
-    # --- 数据操作 ---
+
     def insert(
         self,
         collection_name: str,
         vectors: List[List[float]],
         texts: Optional[List[str]] = None,
         metadatas: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[int]:
+        ids: Optional[List[Union[int, str]]] = None,  # 新增：支持自定义主键ID
+        max_retries: int = 3  # 新增：插入失败重试次数
+    ) -> List[Union[int, str]]:
         """
         向集合中插入向量及可选的文本和 metadata，并返回插入记录的主键列表。
 
@@ -229,33 +245,59 @@ class MilvusManager:
             vectors: 向量列表，形状为 List[List[float]]。
             texts: 可选的文本列表，与 vectors 对应，默认空字符串列表。
             metadatas: 可选的 metadata 列表（字典），会被序列化为 JSON 字符串。
+            ids: 可选的主键ID列表。如果集合Schema为auto_id=False，则必须提供且保证唯一。
+            max_retries: 插入操作失败时的最大重试次数。
 
         Returns:
-            List[int]: 插入后返回的主键列表；如果无法从返回结果获取主键则返回空列表。
+            List[Union[int, str]]: 插入后返回的主键列表。
         """
-        coll = self.get_collection(collection_name)
-        n = len(vectors)
-        texts = texts or ["" for _ in range(n)]
-        metadatas = metadatas or [{} for _ in range(n)]
-
-        # metadata 序列化为 json 字符串
-        metadata_strs = [json.dumps(m, ensure_ascii=False) for m in metadatas]
-
-        # 注意插入数据顺序需与 schema 中字段顺序（除 auto_id 主键外）一致
-        entities = [vectors, texts, metadata_strs]
-
-        res = coll.insert(entities)
-        # 插入后可能需要 flush
-        coll.flush()
-
-        # 尝试从返回结果中获取主键
         try:
-            pks = res.primary_keys
-        except Exception:
-            # fallback: 使用 num_entities 计算末尾 id 不是可靠方法，但保留空列表处理
-            pks = []
-        self._logger.info(f"inserted {n} entities into {collection_name}")
-        return pks
+            coll = self.get_collection(collection_name)
+            n = len(vectors)
+            texts = texts or ["" for _ in range(n)]
+            metadatas = metadatas or [{} for _ in range(n)]
+
+            # 关键优化1：准备实体数据，按行（实体）组织，而非按列（字段）组织
+            entities = []
+            for i in range(n):
+                # 构建每个实体的数据字典
+                entity_data = {
+                    "vector": vectors[i],  # 假设您的向量字段名为'vector'
+                    "text": texts[i],      # 假设您的文本字段名为'text'
+                    "metadata": json.dumps(metadatas[i], ensure_ascii=False)  # 假设您的元数字段名为'metadata'
+                }
+                # 关键优化2：处理主键ID，支持幂等性插入
+                # 如果调用者提供了ids，则使用它
+                if ids is not None and i < len(ids):
+                    entity_data["id"] = ids[i]  # 假设您的主键字段名为'id'
+                # 如果没有提供ids，但集合要求手动ID（auto_id=False），这里可以抛出错误或生成一个ID
+                # 此处简化处理，实际应用中需根据集合Schema的auto_id配置进行更细致的判断[6](@ref)
+                entities.append(entity_data)
+
+            # 关键优化3：带重试机制的插入操作
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    # 使用字典列表进行插入
+                    res = coll.insert(entities)
+                    coll.flush()  # 确保数据持久化
+                    self._logger.info(f"Successfully inserted {n} entities into {collection_name}")
+                    # 返回主键
+                    return res.primary_keys if hasattr(res, 'primary_keys') else []
+                except Exception as e:
+                    last_exception = e
+                    wait_time = 2 ** attempt  # 指数退避策略
+                    self._logger.warning(f"Insert attempt {attempt+1} failed: {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+
+            # 所有重试都失败
+            self._logger.error(f"All {max_retries} insert attempts failed for {collection_name}: {last_exception}")
+            raise last_exception
+
+        except Exception as e:
+            self._logger.error(f"Insert operation failed for {collection_name}: {e}")
+            # 可根据需要决定是向上抛出异常还是返回空列表
+            raise  # 或者 return []
 
     def delete(self, collection_name: str, expr: str) -> Dict[str, Any]:
         """

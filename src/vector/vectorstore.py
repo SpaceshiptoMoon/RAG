@@ -5,14 +5,15 @@ vector.py - 文档向量化与向量存储模块
 """
 import hashlib
 import time
-import logging
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Union, Dict, Any
+from src.models.embedding import EmbeddingClient
+from src.vector.milvus_db import MilvusManager
 from langchain_core.documents.base import Document
 from src.docs_read.data_read import ReadFiles
+from src.log.log_config import setup_logger
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class DocumentVectorizer:
@@ -25,7 +26,7 @@ class DocumentVectorizer:
         doc_reader: 文档读取器实例（负责读取和分块文档）。
         collection_name (str): 向量集合名称。
     """
-    def __init__(self, embedding_client, milvus_client, doc_reader, collection_name: str = "documents_collection"):
+    def __init__(self, embedding_client : EmbeddingClient, milvus_client : MilvusManager, doc_reader : ReadFiles, collection_name: str = "documents_collection"):
         self.embedding_client = embedding_client
         self.milvus = milvus_client
         self.doc_reader = doc_reader
@@ -68,7 +69,7 @@ class DocumentVectorizer:
                 return
             vectors = self.embedding_client.embed_documents(texts)
             self.milvus.insert(self.collection_name, vectors, texts, None)
-            logger.info("向量插入完成")
+            logger.info(f"成功添加 {len(chunks)} 个文本块到向量数据库")
         except Exception as e:
             logger.error(f"向量数据库创建/插入失败: {e}")
             raise
@@ -83,22 +84,6 @@ class DocumentVectorizer:
         except Exception as e:
             logger.error(f"清空集合失败: {e}")
                 
-    def add_to_existing_store(self, chunks: List) -> None:
-        """
-        向现有向量数据库添加文档
-        Args:
-            chunks: 新的文本块列表
-        """
-        try:
-            texts = [d.page_content if isinstance(d, Document) else str(d) for d in chunks]
-            if not texts:
-                return
-            vectors = self.embedding_client.embed_documents(texts)
-            self.milvus.insert(self.collection_name, vectors, texts, None)
-            logger.info(f"成功添加 {len(chunks)} 个文本块到向量数据库")
-        except Exception as e:
-            logger.error(f"添加文档失败: {e}")
-            raise
     def query_similarity(self, query: str, top_k: int = 5) -> List:
         """
         查询相似文档
@@ -130,18 +115,16 @@ class DocumentVectorizer:
             self._ensure_collection()
         except Exception as e:
             logger.error(f"向量数据库初始化失败: {e}")
-    def process_document(self, file_path: str, is_text: bool = True, 
-                        add_to_existing: bool = True, batch_size: int = 50) -> bool:
+            
+    def process_document(self, batch_size: int = 50) -> bool:
         """
         处理单个文档的完整流程（适配新版insert方法）
         Args:
-            file_path: 文档路径
-            is_text: 是否为文本类型
-            add_to_existing: 是否添加到现有数据库
             batch_size: 每批处理的chunk数量
         Returns:
             处理是否成功
         """
+        file_path = self.doc_reader._path
         try:
             if batch_size > 100:
                 logger.warning(f"批次大小 {batch_size} 超过推荐值(64)，已自动调整为64")
@@ -150,9 +133,9 @@ class DocumentVectorizer:
             documents_operater = self.doc_reader
             symbol_chunks = documents_operater.get_symbol_content()
             token_chunks = documents_operater.get_content()
-            if is_text:
-                symbol_chunks = self.txt_to_Document(symbol_chunks)
-                token_chunks = self.txt_to_Document(token_chunks)
+            
+            symbol_chunks = self.txt_to_Document(symbol_chunks)
+            token_chunks = self.txt_to_Document(token_chunks)
             chunks = symbol_chunks + token_chunks 
             total_chunks = len(chunks)
             if total_chunks == 0:
@@ -170,25 +153,14 @@ class DocumentVectorizer:
                     batch_chunks = [d.page_content if isinstance(d, Document) else str(d) for d in batch_chunks]
                     vectors = self.embedding_client.batch_embed_with_progress(batch_chunks, batch_size=batch_size)
                     metadatas = self._prepare_metadatas(file_path, batch_chunks, i)
-                    if add_to_existing:
-                        result_ids = self.milvus.insert(
-                            collection_name=self.collection_name,
-                            vectors=vectors,
-                            texts=batch_chunks,
-                            metadatas=metadatas,
-                            ids=batch_ids,
-                            max_retries=3
-                        )
-                    else:
-                        self.create_vector_store(self.collection_name, len(vectors[0]))
-                        result_ids = self.milvus.insert(
-                            collection_name=self.collection_name,
-                            vectors=vectors,
-                            texts=batch_chunks,
-                            metadatas=metadatas,
-                            ids=batch_ids,
-                            max_retries=3
-                        )
+                    result_ids = self.milvus.insert(
+                        collection_name=self.collection_name,
+                        vectors=vectors,
+                        texts=batch_chunks,
+                        metadatas=metadatas,
+                        ids=batch_ids,
+                        max_retries=3
+                    )
                     if result_ids and len(result_ids) == current_batch_size:
                         successful_batches += 1
                         logger.debug(f"批次 {batch_index + 1} 插入成功，获得 {len(result_ids)} 个ID")

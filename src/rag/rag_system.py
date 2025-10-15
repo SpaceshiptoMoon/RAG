@@ -1,149 +1,178 @@
 # src/rag/rag_system.py
 import os
 import hashlib
-from typing import List, Dict, Any
+import logging
+from typing import Dict, Any
 from src.docs_read.data_read import ReadFiles
 from src.vector.milvus_db import MilvusManager
-from src.models.embedding import  EmbeddingModelFactory
+from src.models.embedding import EmbeddingModelFactory
 from src.vector.vectorstore import DocumentVectorizer
 from src.rag.retriever import VectorRetriever
 from src.rag.generator import AnswerGenerator
+from src.models.llm import get_llm
+
+# 配置logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class RAGSystem:
     """
-    完整的 RAG 系统：索引构建 + 检索增强生成
+    完整的 RAG 系统实现类
+    
+    Args:
+        data_path: 文档数据路径
+        collection_name: Milvus集合名称，默认为"documents"
+        
+    Attributes:
+        data_path: 文档路径
+        collection_name: 向量数据库集合名称
+        embedding_client: 嵌入模型客户端
+        milvus_client: Milvus数据库客户端
+        doc_reader: 文档读取器
+        doc_vectorizer: 文档向量化器
+        retriever: 向量检索器
+        generator: 答案生成器
     """
     def __init__(self, data_path: str, collection_name: str = "documents"):
+        logger.info(f"初始化RAG系统 - 数据路径: {data_path}, 集合名称: {collection_name}")
         self.data_path = data_path
         self.collection_name = collection_name
         
         # 初始化组件
         self._initialize_components()
-        
-        # 确保集合存在
-        self._ensure_collection()
+        logger.info("RAG系统初始化完成")
     
     def _initialize_components(self):
-        """初始化所有组件"""
-        # 嵌入客户端
+        """
+        初始化RAG系统所需的所有组件
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Note:
+            创建嵌入模型、Milvus客户端、文档读取器、向量化器、检索器和生成器实例
+            采用单例模式创建底层客户端，避免重复创建
+        """
+        logger.info("开始初始化RAG系统组件")
+        # 嵌入客户端（单例式创建）
         self.embedding_client = EmbeddingModelFactory.create_model({'enable_cache': True})
-        
-        # Milvus 客户端
+
+        # Milvus 客户端（单一连接实例，DocumentVectorizer 会在内部调用 connect）
         host = os.getenv("MILVUS_HOST", "127.0.0.1")
-        self.milvus_client = MilvusManager(host=host, port=19530)
-        
-        # 检索器
-        self.retriever = VectorRetriever(
-            self.milvus_client, 
-            self.embedding_client, 
-            self.collection_name
-        )
-        
-        # 生成器
-        self.generator = AnswerGenerator()
-        
+        port = int(os.getenv("MILVUS_PORT", 19530))
+        self.milvus_client = MilvusManager(host=host, port=port)
+
         # 文档读取器
         self.doc_reader = ReadFiles(self.data_path)
+
+        # 文档向量化与存储器（会确保集合存在并建立连接）
+        self.doc_vectorizer = DocumentVectorizer(
+            embedding_client=self.embedding_client,
+            milvus_client=self.milvus_client,
+            doc_reader=self.doc_reader,
+            collection_name=self.collection_name,
+        )
+
+        # 向量检索器
+        self.retriever = VectorRetriever(
+            self.milvus_client,
+            self.embedding_client,
+            self.collection_name,
+        )
+
+        # LLM 与答案生成器（通过工厂创建，便于由 env 控制 provider）
+        llm = get_llm()
+        self.generator = AnswerGenerator(llm)
     
     def _ensure_collection(self):
-        """确保 Milvus 集合存在"""
+        """
+        确保Milvus集合存在，如不存在则创建
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Raises:
+            Exception: 集合创建失败时抛出异常
+        """
         try:
-            # 检查集合是否存在
-            collections = self.milvus_client.list_collections()
-            if self.collection_name not in collections:
-                self.milvus_client()
+            logger.info(f"检查集合 {self.collection_name} 是否存在")
+            self.doc_vectorizer._ensure_collection()
         except Exception as e:
-            print(f"检查集合时出错: {e}")
-            self._create_collection()
+            logger.error(f"检查/创建集合失败: {e}")
+            try:
+                dim = self.embedding_client.get_dimension()
+                logger.info(f"尝试直接创建维度为{dim}的集合")
+                self.milvus_client.create_collection(self.collection_name, dim)
+            except Exception as e2:
+                logger.error(f"强制创建集合失败: {e2}")
+                raise
     
     def _create_collection(self):
-        """创建 Milvus 集合"""
-        schema_config = {
-            "collection_name": self.collection_name,
-            "dimension": 1536,  # 需要与嵌入模型维度匹配
-            "fields": [
-                {"name": "id", "type": "VARCHAR", "is_primary": True, "max_length": 100},
-                {"name": "embedding", "type": "FLOAT_VECTOR", "dim": 1536},
-                {"name": "text", "type": "VARCHAR", "max_length": 65535},
-                {"name": "source", "type": "VARCHAR", "max_length": 500},
-                {"name": "chunk_index", "type": "INT64"}
-            ]
-        }
-        self.milvus_client.create_collection(schema_config)
+        """创建 Milvus 集合（基于当前嵌入模型维度）。"""
+        try:
+            dim = self.embedding_client.get_dimension()
+            self.milvus_client.create_collection(self.collection_name, dim)
+        except Exception as e:
+            print(f"创建集合失败: {e}")
     
     def build_index(self) -> bool:
         """
-        构建文档索引：读取文档、分块、生成向量、存储到 Milvus
+        构建文档索引，包含文档读取、分块、向量化和存储流程
+        
+        Args:
+            None
+            
+        Returns:
+            bool: 索引构建是否成功
+            
+        Raises:
+            Exception: 构建过程中的任何错误
         """
+        logger.info("开始构建文档索引")
         try:
-            print("开始构建文档索引...")
-            
-            # 读取并分块文档
-            documents = self.doc_reader.get_content(max_token_len=600, cover_content=150)
-            print(f"读取到 {len(documents)} 个文档块")
-            
-            # 准备批量插入的数据
-            insert_data = []
-            for i, doc_chunk in enumerate(documents):
-                # 生成文档ID
-                doc_id = hashlib.md5(f"{i}_{doc_chunk[:50]}".encode()).hexdigest()[:16]
-                
-                # 生成向量（批量处理更高效）
-                insert_data.append({
-                    "id": doc_id,
-                    "text": doc_chunk,
-                    "source": f"document_{i}",
-                    "chunk_index": i
-                })
-            
-            # 批量生成向量并插入
-            batch_size = 50
-            for i in range(0, len(insert_data), batch_size):
-                batch = insert_data[i:i + batch_size]
-                batch_texts = [item["text"] for item in batch]
-                
-                # 生成批量向量
-                batch_vectors = self.embedding_client.embed_query(batch_texts)
-                
-                # 准备最终插入数据
-                final_batch = []
-                for j, item in enumerate(batch):
-                    if j < len(batch_vectors):
-                        final_batch.append({
-                            **item,
-                            "embedding": batch_vectors[j]
-                        })
-                
-                # 插入到 Milvus
-                if final_batch:
-                    self.milvus_client.insert(
-                        collection_name=self.collection_name,
-                        data=final_batch
-                    )
-                    print(f"已插入 {len(final_batch)} 个文档块")
-            
-            print("文档索引构建完成！")
+            self.doc_vectorizer.process_document()
+            logger.info("文档索引构建完成")
             return True
-            
         except Exception as e:
-            print(f"构建索引时出错: {e}")
+            logger.error(f"构建索引失败: {e}")
             return False
     
     def query(self, question: str, top_k: int = 5) -> Dict[str, Any]:
         """
-        RAG 查询：检索 + 生成
+        执行RAG查询，包括检索和生成答案的完整流程
+        
+        Args:
+            question: 用户问题
+            top_k: 检索的相关文档数量
+            
+        Returns:
+            Dict[str, Any]: 包含以下字段的结果字典：
+                - question: 原始问题
+                - answer: 生成的答案
+                - sources: 使用的参考源
+                - confidence: 答案置信度
+                - retrieved_docs: 检索到的文档
+                - retrieved_count: 检索到的文档数量
         """
+        logger.info(f"开始处理查询: {question[:50]}...")
         try:
             # 1. 检索相关文档
-            print("正在检索相关文档...")
+            logger.info("执行文档检索...")
             retrieved_docs = self.retriever.retrieve(question, top_k=top_k)
-            print(f"检索到 {len(retrieved_docs)} 个相关文档")
+            logger.info(f"检索到 {len(retrieved_docs)} 个相关文档")
             
             # 2. 生成答案
-            print("正在生成答案...")
+            logger.info("开始生成答案...")
             result = self.generator.generate_answer(question, retrieved_docs)
+            logger.info("答案生成完成")
             
-            return {
+            response = {
                 "question": question,
                 "answer": result["answer"],
                 "sources": result["sources"],
@@ -151,8 +180,11 @@ class RAGSystem:
                 "retrieved_docs": retrieved_docs,
                 "retrieved_count": len(retrieved_docs)
             }
+            logger.info(f"查询处理完成，置信度: {result['confidence']}")
+            return response
             
         except Exception as e:
+            logger.error(f"查询处理失败: {e}")
             return {
                 "question": question,
                 "answer": f"处理查询时出现错误：{str(e)}",
@@ -162,11 +194,18 @@ class RAGSystem:
             }
     
     def get_system_info(self) -> Dict[str, Any]:
-        """获取系统信息"""
+        """
+        获取RAG系统的当前状态信息
+        
+        Returns:
+            Dict[str, Any]: 包含以下字段的系统信息字典：
+                - collection_exists: 集合是否存在
+                - collection_name: 集合名称
+                - data_path: 数据路径
+                - components_initialized: 组件是否已初始化
+        """
         try:
             collections = self.milvus_client.list_collections()
-            collection_info = self.milvus_client.describe_collection(self.collection_name)
-            
             return {
                 "collection_exists": self.collection_name in collections,
                 "collection_name": self.collection_name,

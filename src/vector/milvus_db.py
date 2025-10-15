@@ -2,8 +2,8 @@ import os
 import time
 import logging
 import json
+import os
 from typing import List, Dict, Any, Optional, Union
-
 from pymilvus import (
     connections,
     FieldSchema,
@@ -12,6 +12,7 @@ from pymilvus import (
     Collection,
     utility,
 )
+from src.log.log_config import setup_logger
 
 import os
 
@@ -54,16 +55,12 @@ class MilvusManager:
 
     def _setup_logger(self) -> logging.Logger:
         """
-        配置并返回用于 MilvusManager 的 logger。
-
-        Args:
-            None
+        配置并返回用于 MilvusManager 的 logger
 
         Returns:
-            logging.Logger: 配置好的 logger 实例，名称格式为 `MilvusManager_{alias}`。
+            logging.Logger: 配置好的 logger 实例
         """
-        logger = logging.getLogger(f"MilvusManager_{self.alias}")
-        if not logger.handlers:
+        return setup_logger(f"MilvusManager_{self.alias}")
             handler = logging.StreamHandler()
             formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
             handler.setFormatter(formatter)

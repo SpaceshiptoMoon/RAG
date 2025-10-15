@@ -1,3 +1,6 @@
+# 日志文件目录
+src/log/logs/
+
 # 忽略Python编译文件和缓存目录
 __pycache__/
 *.py[cod]

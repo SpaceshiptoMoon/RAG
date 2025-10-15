@@ -1,13 +1,31 @@
 import os
 import re
 import markdown
+import os
+import re
 from typing import List, Union
 from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
 from bs4 import BeautifulSoup
+from src.log.log_config import setup_logger
+
+# 配置日志
+logger = setup_logger(__name__)
 
 class ReadFiles:
     """
-    读取文件的类,支持文件读取文件(.txt、.md、.pdf、.doc、.docx)进行内容分割。
+    文件读取和分割处理类
+    
+    Args:
+        path: 要读取的文件或文件夹路径
+        file_type: 指定文件类型，默认为None（支持所有类型）
+        
+    Attributes:
+        _path: 文件路径
+        _filetype: 文件类型
+        file_list: 待处理的文件列表
+        
+    Notes:
+        支持的文件类型：.txt、.md、.pdf、.doc、.docx
     """
     def __init__(self, path: str, file_type: str = None) -> None:
         """

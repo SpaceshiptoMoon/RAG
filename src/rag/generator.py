@@ -1,13 +1,24 @@
 # src/rag/generator.py
-import os
+
 from typing import List, Dict, Any
 from langchain_core.prompts import ChatPromptTemplate
 from src.prompt.prompt_template import QA_PROMPT
 from src.models.llm import OpenAIModel
+from src.log.log_config import setup_logger
+
+# 配置日志
+logger = setup_logger(__name__)
 
 class AnswerGenerator:
     """
     基于检索结果的答案生成器
+    
+    Args:
+        llm: OpenAI模型实例
+        
+    Attributes:
+        llm: 语言模型实例
+        qa_prompt: 问答提示模板
     """
     def __init__(self, llm: OpenAIModel):
         self.llm = llm.llm
@@ -17,7 +28,15 @@ class AnswerGenerator:
     def generate_answer(self, question: str, context_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         基于检索到的上下文生成答案
+        
+        Args:
+            question: 用户问题
+            context_docs: 检索到的相关文档列表
+            
+        Returns:
+            Dict[str, Any]: 包含答案、来源和置信度的字典
         """
+        logger.info(f"开始生成答案 - 问题: {question[:50]}...")
         if not context_docs:
             return {
                 "answer": "抱歉，我没有找到相关的信息来回答这个问题。",
@@ -31,16 +50,20 @@ class AnswerGenerator:
         # 生成答案
         try:
             qa_prompt = self.qa_prompt.invoke({"context": context, "question":question})
+            logger.debug("调用语言模型生成答案")
             response = self.llm.invoke(qa_prompt)
             
-            
-            return {
+            result = {
                 "answer": response,
                 "sources": [doc.get("source", "未知来源") for doc in context_docs],
                 "confidence": self._calculate_confidence(context_docs),
                 "context_docs": context_docs
             }
+            logger.info("答案生成完成")
+            return result
+            
         except Exception as e:
+            logger.error(f"生成答案时出现错误: {e}")
             return {
                 "answer": f"生成答案时出现错误：{str(e)}",
                 "sources": [],

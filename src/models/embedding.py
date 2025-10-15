@@ -1,9 +1,14 @@
 import os
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from functools import lru_cache
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
+from src.log.log_config import setup_logger
+
+# 配置日志
+logger = setup_logger(__name__)
 load_dotenv()
 
 class EmbeddingClient:
@@ -59,16 +64,12 @@ class EmbeddingClient:
         }
     
     def _setup_logging(self) -> logging.Logger:
-        """配置日志系统"""
-        logger = logging.getLogger(f"EmbeddingClient")
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - [%(model_type)s] - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
+        """
+        配置日志系统
+        
+        Returns:
+            logging.Logger: 配置好的日志记录器
+        """
         return logger
 
     def _initialize_model(self):

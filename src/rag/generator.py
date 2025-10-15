@@ -1,34 +1,18 @@
 # src/rag/generator.py
+import os
 from typing import List, Dict, Any
-from langchain.schema import BaseRetriever
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
+from src.prompt.prompt_template import QA_PROMPT
+from src.models.llm import OpenAIModel
 
 class AnswerGenerator:
     """
     基于检索结果的答案生成器
     """
-    def __init__(self, api_key: str = None, model_name: str = "gpt-3.5-turbo"):
-        self.llm = ChatOpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY"),
-            model_name=model_name
-        )
-        self.setup_prompts()
-    
-    def setup_prompts(self):
-        """设置提示词模板"""
-        self.qa_prompt = PromptTemplate(
-            template="""请根据以下上下文信息回答问题。如果上下文信息不足以回答问题，请如实告知。
-            
-上下文信息：
-{context}
-
-问题：{question}
-
-请提供准确、详细的回答：""",
-            input_variables=["context", "question"]
-        )
+    def __init__(self, llm: OpenAIModel):
+        self.llm = llm.llm
+        self.qa_prompt = ChatPromptTemplate.from_template(QA_PROMPT)
+         
     
     def generate_answer(self, question: str, context_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -46,9 +30,9 @@ class AnswerGenerator:
         
         # 生成答案
         try:
-            response = self.llm.predict(
-                self.qa_prompt.format(context=context, question=question)
-            )
+            qa_prompt = self.qa_prompt.invoke({"context": context, "question":question})
+            response = self.llm.invoke(qa_prompt)
+            
             
             return {
                 "answer": response,

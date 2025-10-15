@@ -19,14 +19,14 @@ class VectorRetriever:
         """
         try:
             # 将查询转换为向量
-            query_vector = self.embedding_client.embed_query([query])[0]
-            
+            query_vector = self.embedding_client.embed_query(query)
+        
             # 在 Milvus 中进行向量相似度搜索
             search_results = self.milvus_client.search(
                 collection_name=self.collection_name,
-                data=[query_vector],
-                limit=top_k,
-                output_fields=["id", "text", "source", "chunk_index"]
+                query_vectors=[query_vector],
+                top_k=top_k,
+                fields=["id", "text", "metadata"]
             )
             
             return search_results
@@ -38,5 +38,5 @@ class VectorRetriever:
         """
         混合检索策略（可扩展为结合关键词和向量检索）
         """
-        # 当前使用向量检索，可扩展为结合 BM25 等稀疏检索方法[2](@ref)
+        # 当前使用向量检索，可扩展为结合 BM25 等稀疏检索方法
         return self.retrieve(query, top_k)

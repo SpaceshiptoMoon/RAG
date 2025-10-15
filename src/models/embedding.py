@@ -202,7 +202,7 @@ class EmbeddingClient:
             'config': {k: v for k, v in self.config.items() if k != 'api_key'}
         }
 
-    def batch_embed_with_progress(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
+    def batch_embed_with_progress(self, texts: List[str], batch_size: int = 90) -> List[List[float]]:
         """
         带进度批处理的嵌入方法
         

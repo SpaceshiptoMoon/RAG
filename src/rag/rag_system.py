@@ -4,9 +4,10 @@ import hashlib
 from typing import List, Dict, Any
 from src.docs_read.data_read import ReadFiles
 from src.vector.milvus_db import MilvusManager
-from src.models.embedding import EmbeddingClient, EmbeddingModelFactory
-from .retriever import VectorRetriever
-from .generator import AnswerGenerator
+from src.models.embedding import  EmbeddingModelFactory
+from src.vector.vectorstore import DocumentVectorizer
+from src.rag.retriever import VectorRetriever
+from src.rag.generator import AnswerGenerator
 
 class RAGSystem:
     """
@@ -50,7 +51,7 @@ class RAGSystem:
             # 检查集合是否存在
             collections = self.milvus_client.list_collections()
             if self.collection_name not in collections:
-                self._create_collection()
+                self.milvus_client()
         except Exception as e:
             print(f"检查集合时出错: {e}")
             self._create_collection()

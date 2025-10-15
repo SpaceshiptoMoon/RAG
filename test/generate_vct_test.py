@@ -1,5 +1,4 @@
 from src.vector.vectorstore import DocumentVectorizer
-from src.vector.milvus_db import MilvusManager
 from dotenv import load_dotenv
 import os
 load_dotenv()
@@ -17,8 +16,8 @@ user_config = {'model_type': provider,
             'api_key': api_key,
             'base_url': env_base_url,
             'enable_cache': True}
-
-vectorizer = DocumentVectorizer(collection_name="test_collection", milvus_host=host, milvus_port=port, embedding_config=user_config)
-# vectorizer.process_document("./data")
-results =  vectorizer.query_similarity("什么是人工智能？", top_k=3)
-print(results)
+doc = DocumentVectorizer("insert_test_collection", milvus_host=host, milvus_port=port, embedding_config=user_config)
+print(doc.milvus.host, doc.milvus.port)
+print(type(doc.milvus.port),type(doc.milvus.host))
+# doc.delete_db()
+# doc.process_document("./data")

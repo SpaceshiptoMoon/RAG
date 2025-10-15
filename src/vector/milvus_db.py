@@ -12,10 +12,10 @@ from pymilvus import (
     Collection,
     utility,
 )
-from dotenv import load_dotenv
+
 import os
 
-load_dotenv()
+
 
 class MilvusManager:
     """基于 pymilvus 的 Milvus 管理类。
@@ -29,7 +29,7 @@ class MilvusManager:
     - metadata 存为 JSON 字符串
     """
 
-    def __init__(self, host: str = None, port: int = None, alias: str = "default"):
+    def __init__(self, host: str = None, port: str = None, alias: str = "default"):
         """
         初始化 MilvusManager 实例。
 
@@ -41,9 +41,13 @@ class MilvusManager:
         Returns:
             None: 不返回值，完成对象初始化。
         """
-        load_dotenv()
         self.host = host if host else os.getenv("MILVUS_HOST", "127.0.0.1")
-        self.port = port if port else int(os.getenv("MILVUS_PORT", 19530))
+        
+        try:
+            self.port = int(port) if port else int(os.getenv("MILVUS_PORT", "19530"))
+        except ValueError:
+            self.port = 19530 
+
         self.alias = alias
         self._logger = self._setup_logger()
         self.connect()
@@ -252,28 +256,18 @@ class MilvusManager:
             List[Union[int, str]]: 插入后返回的主键列表。
         """
         try:
+            # 关键优化1：准备实体数据
             coll = self.get_collection(collection_name)
             n = len(vectors)
             texts = texts or ["" for _ in range(n)]
             metadatas = metadatas or [{} for _ in range(n)]
 
-            # 关键优化1：准备实体数据，按行（实体）组织，而非按列（字段）组织
-            entities = []
-            for i in range(n):
-                # 构建每个实体的数据字典
-                entity_data = {
-                    "vector": vectors[i],  # 假设您的向量字段名为'vector'
-                    "text": texts[i],      # 假设您的文本字段名为'text'
-                    "metadata": json.dumps(metadatas[i], ensure_ascii=False)  # 假设您的元数字段名为'metadata'
-                }
-                # 关键优化2：处理主键ID，支持幂等性插入
-                # 如果调用者提供了ids，则使用它
-                if ids is not None and i < len(ids):
-                    entity_data["id"] = ids[i]  # 假设您的主键字段名为'id'
-                # 如果没有提供ids，但集合要求手动ID（auto_id=False），这里可以抛出错误或生成一个ID
-                # 此处简化处理，实际应用中需根据集合Schema的auto_id配置进行更细致的判断[6](@ref)
-                entities.append(entity_data)
+            # metadata 序列化为 json 字符串
+            metadata_strs = [json.dumps(m, ensure_ascii=False) for m in metadatas]
 
+            # 注意插入数据顺序需与 schema 中字段顺序（除 auto_id 主键外）一致
+            entities = [vectors, texts, metadata_strs]
+                
             # 关键优化3：带重试机制的插入操作
             last_exception = None
             for attempt in range(max_retries):

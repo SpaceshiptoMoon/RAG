@@ -1,0 +1,89 @@
+基于 LangGraph 的工具调用智能体设计与落地
+
+一、目标与能力范围
+• 支持多轮对话，自动判断是否需要调用工具，执行后将结果回填并继续推理，直至给出可交付答案。
+
+• 内置两类示例工具：计算器（安全沙箱表达式求值）与天气查询（HTTP 调用演示），便于即插即用与扩展。
+
+• 具备最大步数、超时、异常捕获与降级、工具参数校验、结构化输出等工程化能力。
+
+• 采用ReAct循环（Reason-Act-Observe），通过LangGraph 条件边实现“思考→行动→观察→再思考”的闭环。
+
+• 输出格式统一为工具调用或最终答案，便于前端或下游系统消费。
+
+• 请根据我src文档下的代码进行实现，但是不要改动我原始的代码，允许你在src下直接创建文件夹和文件，但请勿改动我原始的代码。
+
+• 我的原始代码在src文件夹下。他实现了一个基于milvus的向量数据库和向量检索回答。
+
+
+二、工程要求与约束
+• 语言与依赖
+
+  • 运行环境：Python 3.10+
+
+  • 核心依赖：langgraph、langchain-core、langchain-openai（或你正在使用的 LLM 提供商）
+
+  • 可选：httpx（天气示例需要）
+
+• 状态模型
+
+  • 使用TypedDict定义状态，消息列表采用Annotated + add_messages合并策略，保证多轮上下文可累加。
+
+• 工具规范
+
+  • 工具需使用@tool装饰，具备清晰的name、description、参数Schema，便于模型正确选型与调用。
+
+• 安全与稳定性
+
+  • 计算器采用ast.literal_eval或RestrictedPython等安全求值；生产环境可替换为沙箱进程/表达式引擎。
+
+  • 所有工具调用设置超时与重试（幂等场景可重试），并捕获异常回填错误信息。
+
+• 可观测与调试
+
+  • 打印/记录每轮思考、行动、观测，便于定位问题。
+
+  • 可接入LangGraph Studio可视化流程与断点调试。 
+
+• 日志
+
+  • 直接使用src.log_config下的setup_logger函数进行日志的初始化
+
+• 函数规范
+    • 遵循PEP8规范，函数与类具备清晰的职责划分与注释说明。
+    比如
+    def setup_logger(module_name: str) -> logging.Logger:
+    """
+    设置日志记录器
+    
+    Args:
+        module_name: 模块名称
+        
+    Returns:
+        logging.Logger: 配置好的日志记录器
+    """
+
+三、系统架构与流程
+• 状态结构：包含messages（对话与工具消息）、tool_calls（本轮工具调用轨迹）等。
+
+• 节点设计
+
+  • agent_node：注入系统提示与工具清单，调用LLM.bind_tools(tools)进行推理，输出思考与可能的工具调用。
+
+  • tool_node：基于 LLM 输出的tool_calls自动执行对应函数，回填ToolMessage。
+
+  • router：判定“是否需要调用工具”或“是否生成最终答案”，决定走向。
+
+• 边与终止
+
+  • 条件边：has_tool_calls → tool_node；满足结束条件（如出现FINAL ANSWER或业务判定）→ END。
+
+  • 循环边：tool_node → agent_node，继续下一轮推理。
+
+• 运行与扩展
+
+  • 通过compile(checkpointer=…)支持断点续跑；可替换/新增工具、调整路由策略、接入队列与 Webhook。 
+
+流程示意：
+用户输入 → agent_node（思考） → 有工具调用？ → tool_node（执行） → 回填观察 → agent_node（再思考） → 达成结束条件 → 输出最终答案
+

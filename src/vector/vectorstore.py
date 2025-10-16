@@ -129,6 +129,7 @@ class DocumentVectorizer:
             if batch_size > 100:
                 logger.warning(f"批次大小 {batch_size} 超过推荐值(64)，已自动调整为64")
                 batch_size = 100
+
             # 1. 加载文档并分割
             documents_operater = self.doc_reader
             symbol_chunks = documents_operater.get_symbol_content()
@@ -142,30 +143,47 @@ class DocumentVectorizer:
                 logger.warning(f"文档 {file_path} 未提取到有效内容")
                 return False
             logger.info(f"开始处理文档: {file_path}, 共 {total_chunks} 个文本块")
+
             # 2. 分批处理
             successful_batches = 0
             for batch_index, i in enumerate(range(0, total_chunks, batch_size)):
                 batch_chunks = chunks[i:i + batch_size]
                 current_batch_size = len(batch_chunks)
                 logger.info(f"处理批次 {batch_index + 1}/{(total_chunks-1)//batch_size + 1} ({current_batch_size}个文本块)")
+
                 try:
                     batch_ids = self._generate_batch_ids(file_path, i, current_batch_size)
                     batch_chunks = [d.page_content if isinstance(d, Document) else str(d) for d in batch_chunks]
                     vectors = self.embedding_client.batch_embed_with_progress(batch_chunks, batch_size=batch_size)
                     metadatas = self._prepare_metadatas(file_path, batch_chunks, i)
-                    result_ids = self.milvus.insert(
-                        collection_name=self.collection_name,
-                        vectors=vectors,
-                        texts=batch_chunks,
-                        metadatas=metadatas,
-                        ids=batch_ids,
-                        max_retries=3
-                    )
+                    
+                    # 主键autoauto_id=false时，使用batch_ids作为ids
+                    if not self.milvus.get_collection(self.collection_name).schema.primary_field.auto_id:
+                        result_ids = self.milvus.insert(
+                            collection_name=self.collection_name,
+                            vectors=vectors,
+                            texts=batch_chunks,
+                            metadatas=metadatas,
+                            ids=batch_ids,
+                            max_retries=3
+                        )
+                    # 主键autoauto_id=true时，使用batch_ids作为ids
+                    if self.milvus.get_collection(self.collection_name).schema.primary_field.auto_id :
+                        result_ids = self.milvus.insert(
+                            collection_name=self.collection_name,
+                            vectors=vectors,
+                            texts=batch_chunks,
+                            metadatas=metadatas,
+                            # ids=batch_ids,
+                            max_retries=3
+                        )
+
                     if result_ids and len(result_ids) == current_batch_size:
                         successful_batches += 1
                         logger.debug(f"批次 {batch_index + 1} 插入成功，获得 {len(result_ids)} 个ID")
                     else:
                         logger.warning(f"批次 {batch_index + 1} 插入结果ID数量不匹配")
+
                 except Exception as batch_error:
                     logger.error(f"批次 {batch_index + 1} 处理失败: {batch_error}")
                     continue

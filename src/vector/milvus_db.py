@@ -61,12 +61,7 @@ class MilvusManager:
             logging.Logger: 配置好的 logger 实例
         """
         return setup_logger(f"MilvusManager_{self.alias}")
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
-        return logger
+
 
     def connect(self) -> None:
         """
@@ -269,12 +264,23 @@ class MilvusManager:
             last_exception = None
             for attempt in range(max_retries):
                 try:
-                    # 使用字典列表进行插入
-                    res = coll.insert(entities)
-                    coll.flush()  # 确保数据持久化
-                    self._logger.info(f"Successfully inserted {n} entities into {collection_name}")
-                    # 返回主键
-                    return res.primary_keys if hasattr(res, 'primary_keys') else []
+                    if ids:
+                        if len(ids) != n:
+                            raise ValueError("Length of ids must match number of vectors")
+                        ids_entities = [ids, *entities]# 主键ID放在第一位
+                        res = coll.insert(ids_entities)
+                        coll.flush()  # 确保数据持久化
+                        self._logger.info(f"Successfully inserted {n} entities into {collection_name}")
+                        # 返回主键
+                        return res.primary_keys if hasattr(res, 'primary_keys') else []
+
+                    if not ids:
+                        res = coll.insert(entities)
+                        coll.flush()  # 确保数据持久化
+                        self._logger.info(f"Successfully inserted {n} entities into {collection_name}")
+                        # 返回主键
+                        return res.primary_keys if hasattr(res, 'primary_keys') else []
+                    
                 except Exception as e:
                     last_exception = e
                     wait_time = 2 ** attempt  # 指数退避策略
@@ -431,24 +437,3 @@ class MilvusManager:
                 })
         return formatted
 
-
-if __name__ == "__main__":
-    # 简单使用示例（连接前请确保 Milvus 已启动）
-    mgr = MilvusManager(host="192.168.2.83", port=19530)
-    mgr.connect()
-
-    coll = mgr.create_collection("example_vectors", dimension=128)
-
-    import random
-    vectors = [[random.random() for _ in range(128)] for _ in range(10)]
-    texts = [f"doc_{i}" for i in range(10)]
-    metadatas = [{"idx": i} for i in range(10)]
-
-    pks = mgr.insert("example_vectors", vectors, texts, metadatas)
-    print("inserted pks:", pks)
-
-    q = [vectors[0]]
-    res = mgr.search("example_vectors", q, top_k=3)
-    print("search:", res)
-
-    mgr.close()

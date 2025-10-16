@@ -41,7 +41,9 @@ class AnswerGenerator:
             return {
                 "answer": "抱歉，我没有找到相关的信息来回答这个问题。",
                 "sources": [],
-                "confidence": 0.0
+                "confidence": 0.0,
+                "retrieved_docs": "",
+                "retrieved_count": ""
             }
         
         # 构建上下文
@@ -57,7 +59,8 @@ class AnswerGenerator:
                 "answer": response,
                 "sources": [doc.get("source", "未知来源") for doc in context_docs],
                 "confidence": self._calculate_confidence(context_docs),
-                "context_docs": context_docs
+                "retrieved_docs": context_docs,
+                "retrieved_count": len(context_docs)
             }
             logger.info("答案生成完成")
             return result

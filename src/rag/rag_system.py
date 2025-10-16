@@ -1,7 +1,5 @@
 # src/rag/rag_system.py
 import os
-import hashlib
-import logging
 from typing import Dict, Any
 from src.docs_read.data_read import ReadFiles
 from src.vector.milvus_db import MilvusManager
@@ -10,10 +8,10 @@ from src.vector.vectorstore import DocumentVectorizer
 from src.rag.retriever import VectorRetriever
 from src.rag.generator import AnswerGenerator
 from src.models.llm import get_llm
+from src.log.log_config import setup_logger
 
 # 配置logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = setup_logger(__name__)
 
 class RAGSystem:
     """
@@ -62,7 +60,7 @@ class RAGSystem:
 
         # Milvus 客户端（单一连接实例，DocumentVectorizer 会在内部调用 connect）
         host = os.getenv("MILVUS_HOST", "127.0.0.1")
-        port = int(os.getenv("MILVUS_PORT", 19530))
+        port = os.getenv("MILVUS_PORT", "19530")
         self.milvus_client = MilvusManager(host=host, port=port)
 
         # 文档读取器
@@ -86,10 +84,11 @@ class RAGSystem:
         # LLM 与答案生成器（通过工厂创建，便于由 env 控制 provider）
         llm = get_llm()
         self.generator = AnswerGenerator(llm)
+
     
-    def _ensure_collection(self):
+    def _create_collection(self):
         """
-        确保Milvus集合存在，如不存在则创建
+        创建 Milvus 集合（基于当前嵌入模型维度）
         
         Args:
             None
@@ -101,27 +100,14 @@ class RAGSystem:
             Exception: 集合创建失败时抛出异常
         """
         try:
-            logger.info(f"检查集合 {self.collection_name} 是否存在")
-            self.doc_vectorizer._ensure_collection()
-        except Exception as e:
-            logger.error(f"检查/创建集合失败: {e}")
-            try:
-                dim = self.embedding_client.get_dimension()
-                logger.info(f"尝试直接创建维度为{dim}的集合")
-                self.milvus_client.create_collection(self.collection_name, dim)
-            except Exception as e2:
-                logger.error(f"强制创建集合失败: {e2}")
-                raise
-    
-    def _create_collection(self):
-        """创建 Milvus 集合（基于当前嵌入模型维度）。"""
-        try:
             dim = self.embedding_client.get_dimension()
+            logger.info(f"尝试直接创建维度为{dim}的集合")
             self.milvus_client.create_collection(self.collection_name, dim)
+            logger.info(f"直接创建维度为{dim}的集合成功")
         except Exception as e:
-            print(f"创建集合失败: {e}")
+            logger.error(f"强制创建集合失败: {e}")
     
-    def build_index(self) -> bool:
+    def build_file_index(self) -> bool:
         """
         构建文档索引，包含文档读取、分块、向量化和存储流程
         
@@ -141,8 +127,7 @@ class RAGSystem:
             return True
         except Exception as e:
             logger.error(f"构建索引失败: {e}")
-            return False
-    
+            return False    
     def query(self, question: str, top_k: int = 5) -> Dict[str, Any]:
         """
         执行RAG查询，包括检索和生成答案的完整流程

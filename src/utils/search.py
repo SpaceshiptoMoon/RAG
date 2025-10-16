@@ -18,7 +18,6 @@ class GoogleSearch:
 
         response = requests.get(self.base_url, headers=self.headers, params=querystring)
         
-        print()
         
         data_list = response.json()['items']
         
@@ -33,7 +32,7 @@ class GoogleSearch:
                 title = item["title"]
                 description = item["snippet"]
                 item_str = f"{title}: {description}"
-                print(item_str)
+ 
                 result_arr.append(item_str)
             result_str = "\n".join(result_arr)
         return result_str
@@ -45,7 +44,6 @@ if __name__ == "__main__":
     api_key = os.getenv("GOOGLE_SEARCH_API")
     base_url = "https://google-search72.p.rapidapi.com/search"
     querystring = {"q":"人工智能神经网络","lr":"zh-cn","num":"10"}
-    api_key = "1633ca2dc0msh1febf4794ed5bd1p1bbb28jsn02c7fd8068c5"
     headers = {
         "x-rapidapi-key": api_key,
         "x-rapidapi-host": "google-search72.p.rapidapi.com"

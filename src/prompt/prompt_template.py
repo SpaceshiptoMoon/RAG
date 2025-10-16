@@ -44,7 +44,7 @@ QA_PROMPT = """
         - Step 1: Present conflicting claims and their sources in parallel.
         - Step 2: Adjudicate based on evidence weight (clarity, detail level, verifiability) > timeliness > scope of application.
         </|end|>
-
+        
         # Strict Constraints
         <|start|>
         - Prohibited from making subjective inferences, common sense completions, or introducing external knowledge without basis.

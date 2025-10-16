@@ -57,7 +57,7 @@ class AnswerGenerator:
             
             result = {
                 "answer": response,
-                "sources": [doc.get("source", "未知来源") for doc in context_docs],
+                "sources": [doc.get("metadata").get('source_file', '未知来源') for doc in context_docs],
                 "confidence": self._calculate_confidence(context_docs),
                 "retrieved_docs": context_docs,
                 "retrieved_count": len(context_docs)
@@ -77,7 +77,7 @@ class AnswerGenerator:
         """格式化上下文文档"""
         context_parts = []
         for i, doc in enumerate(docs, 1):
-            source = doc.get("source", "未知文档")
+            source = doc.get("metadata").get('source_file', '未知来源')
             text = doc.get("text", "")[:500]  # 限制长度
             context_parts.append(f"[文档 {i} - 来源: {source}]\n{text}\n")
         

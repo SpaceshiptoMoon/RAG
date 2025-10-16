@@ -8,19 +8,19 @@ def main():
     load_dotenv()
     
     # 初始化 RAG 系统
-    rag_system = RAGSystem(data_path="./data")
+    rag_system = RAGSystem(data_path="./data", collection_name="insert_test_collection")
     
     # 检查系统状态
     system_info = rag_system.get_system_info()
     print("系统信息:", system_info)
     
     # 如果集合为空，构建索引
-    if not system_info.get("collection_exists", False):
-        print("检测到空集合，开始构建文档索引...")
-        success = rag_system.build_index()
-        if not success:
-            print("索引构建失败，请检查错误信息")
-            return
+    # if not system_info.get("insert_test_collection", False):
+    #     print("检测到空集合，开始构建文档索引...")
+        # success = rag_system.build_index()
+        # if not success:
+        #     print("索引构建失败，请检查错误信息")
+        #     return
     
     # 交互式问答循环
     print("\n=== RAG 问答系统 ===")

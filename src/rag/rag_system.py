@@ -150,6 +150,7 @@ class RAGSystem:
             # 1. 检索相关文档
             logger.info("执行文档检索...")
             retrieved_docs = self.retriever.retrieve(question, top_k=top_k)
+
             logger.info(f"检索到 {len(retrieved_docs)} 个相关文档")
             
             # 2. 生成答案

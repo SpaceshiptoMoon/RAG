@@ -428,12 +428,19 @@ class MilvusManager:
         )
 
         formatted = []
-        for hits in results:
-            for hit in hits:
-                formatted.append({
-                    "id": hit.id,
-                    "distance": hit.distance,
-                    "entity": hit.entity,
-                })
+        for group in results:                 # group: HybridHits 中的一个分组（本身是 Hits 列表）
+            for hit in group:                  # hit: 单个命中对象（Hits 实例）
+                hit_id = hit.id
+                score = hit.distance           # 或 hit.score，视版本/度量而定
+                ent = hit.entity               # 命中的非向量字段字典
+
+                text = ent.get("text", "").strip()
+                meta_str = ent.get("metadata", "{}")
+                try:
+                    metadata = json.loads(meta_str) if meta_str else {}
+                except json.JSONDecodeError:
+                    metadata = {"raw": meta_str}
+
+                formatted.append({"id": hit_id, "text": text, "metadata": metadata, "distance": score})
         return formatted
 

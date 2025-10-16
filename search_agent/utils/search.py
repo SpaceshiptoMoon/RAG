@@ -43,6 +43,12 @@ if __name__ == "__main__":
     load_dotenv()
     api_key = os.getenv("GOOGLE_SEARCH_API")
     base_url = "https://google-search72.p.rapidapi.com/search"
-    search = GoogleSearch(api_key, base_url)
+    querystring = {"q":"人工智能神经网络","lr":"zh-cn","num":"10"}
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": "google-search72.p.rapidapi.com"
+    }
+    
+    search = GoogleSearch(base_url, headers)
     res = search.search('周杰伦')
     print(res)

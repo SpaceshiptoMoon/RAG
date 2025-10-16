@@ -1,10 +1,8 @@
 import os
 import re
 import markdown
-import os
-import re
-from typing import List, Union
-from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
+from typing import List
+from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader
 from bs4 import BeautifulSoup
 from src.log.log_config import setup_logger
 
@@ -13,24 +11,30 @@ logger = setup_logger(__name__)
 
 class ReadFiles:
     """
-    文件读取和分割处理类
-    
+    文件读取和分割处理类。
+
     Args:
-        path: 要读取的文件或文件夹路径
-        file_type: 指定文件类型，默认为None（支持所有类型）
-        
+        path (str): 要读取的文件或文件夹路径。
+        file_type (str | None): 可选的文件类型过滤，默认为 None（支持所有类型）。
+
     Attributes:
-        _path: 文件路径
-        _filetype: 文件类型
-        file_list: 待处理的文件列表
-        
+        _path (str): 文件或文件夹路径。
+        _filetype (str | None): 指定的文件类型。
+        file_list (List[str]): 待处理的文件路径列表。
+
     Notes:
         支持的文件类型：.txt、.md、.pdf、.doc、.docx
     """
-    def __init__(self, path: str, file_type: str = None) -> None:
+    def __init__(self, path: str, file_type: str | None = None) -> None:
         """
-        初始化函数, 输入要读取的文件路径,读取该路径下所有符合要求的文件。
-        :param path: 传入文件夹路径或文件路径
+        初始化 ReadFiles 实例并收集待处理文件。
+
+        Args:
+            path (str): 文件或目录路径。
+            file_type (str | None): 指定的文件类型（可选）。
+
+        Returns:
+            None
         """
         self._path = path
         self._filetype = file_type
@@ -38,9 +42,11 @@ class ReadFiles:
         
     def get_filepath(self) -> List[str]:
         """
-        读取文件夹中内容, 获取路径下所符合要求文件的路径
-        :return: 文件夹路径
-        """ 
+        获取路径下所有支持的文件路径列表。
+
+        Returns:
+            List[str]: 匹配的文件绝对路径列表。
+        """
         if not os.path.exists(self._path):
             raise FileNotFoundError(f"{self._path} 路径不存在！")
         
@@ -69,11 +75,15 @@ class ReadFiles:
         
     def get_content(self, max_token_len: int = 600, cover_content: int = 150) -> List[str]:
         """
-        读取文件内容并进行分割，将长文本切分为多个块。
-        :param max_token_len: 每个文档片段的最大 Token 长度
-        :param cover_content: 在每个片段之间重叠的 Token 长度
-        :return: 切分后的文档片段列表
-        """ 
+        读取所有文件并按 token 长度切分为多个段落。
+
+        Args:
+            max_token_len (int): 每个片段的最大 token（字节）长度，默认 600。
+            cover_content (int): 片段之间的重叠长度，默认 150。
+
+        Returns:
+            List[str]: 切分后的文本片段列表。
+        """
         docs = []
         for file in self.file_list:
             content = self.read_file_content(file)
@@ -83,9 +93,11 @@ class ReadFiles:
     
     def get_symbol_content(self) -> List[str]:
         """
-        读取文件内容按照标点分割，将长文本切分为多个块。
-        :return: 切分后的文档片段列表
-        """ 
+        将文件内容按中文标点和句子边界切分为片段。
+
+        Returns:
+            List[str]: 按标点切分得到的文本片段列表。
+        """
         docs = []
         for file in self.file_list:
             content = self.read_file_content(file)
@@ -94,9 +106,15 @@ class ReadFiles:
         return docs
     
     @classmethod
-    def split_text_symbol(self, text:str) -> List[str]:
+    def split_text_symbol(self, text: str) -> List[str]:
         """
-        按照标点切块
+        将长文本按标点和常见句子边界分割为句子列表。
+
+        Args:
+            text (str): 输入文本。
+
+        Returns:
+            List[str]: 分割后的句子列表（去除首尾空白）。
         """
         text = re.sub(r"\n{3,}", "\n", text)
         text = re.sub(r'\s', ' ', text)
@@ -120,11 +138,15 @@ class ReadFiles:
     @classmethod
     def get_token_chunk(cls, text: str, max_token_len: int = 600, cover_content: int = 150) -> List[str]:
         """
-        将文档内容按最大 Token 长度进行切分。
-        :param text: 文档内容
-        :param max_token_len: 每个片段的最大 Token 长度
-        :param cover_content: 重叠的内容长度(文本的长度 len(str))
-        :return: 切分后的文档片段列表
+        将文本按指定的最大 token 长度切分为多个块，支持重叠区域。
+
+        Args:
+            text (str): 待切分的文本。
+            max_token_len (int): 每个片段的最大 token 长度（字节数）。
+            cover_content (int): 相邻片段之间的重叠长度（字节数）。
+
+        Returns:
+            List[str]: 切分后的文本片段列表。
         """
         chunk_text = [] # 分块列表 ,存储分块内容
         curr_len = 0 # 当前token长度
@@ -165,11 +187,18 @@ class ReadFiles:
 
         
     @classmethod
-    def read_file_content(cls, file_path: str) -> str: 
+    def read_file_content(cls, file_path: str) -> str:
         """
-        读取文件内容，根据文件类型选择不同的读取方式。
-        :param file_path: 文件路径
-        :return: 文件内容
+        读取单个文件的内容，根据扩展名选择不同的解析方法。
+
+        Args:
+            file_path (str): 文件路径。
+
+        Returns:
+            str: 文件的纯文本内容。
+
+        Raises:
+            ValueError: 不支持的文件格式。
         """
         if file_path.endswith('.pdf'):
             return cls.read_pdf(file_path)
@@ -187,9 +216,13 @@ class ReadFiles:
     @classmethod
     def read_pdf(cls, file_path: str) -> str:
         """
-        读取 PDF 文件内容。
-        :param file_path: PDF 文件路径
-        :return: PDF 文件中的文本内容
+        读取 PDF 文件并返回文本内容。
+
+        Args:
+            file_path (str): PDF 文件路径。
+
+        Returns:
+            str: PDF 中的文本内容。
         """
         loader = PyPDFLoader(file_path)
         text = ""
@@ -198,11 +231,18 @@ class ReadFiles:
         return text
         
     @classmethod
-    def read_markdown(cls, file_path:str) -> str:
+    def read_markdown(cls, file_path: str) -> str:
         """
-        读取 Markdown 文件内容，并将其转换为纯文本。
-        :param file_path: Markdown 文件路径
-        :return: 纯文本内容
+        读取 Markdown 文件并将其渲染为纯文本（移除链接等）。
+
+        Args:
+            file_path (str): Markdown 文件路径。
+
+        Returns:
+            str: 渲染后的纯文本内容。
+
+        Raises:
+            FileExistsError: 当文件不存在时抛出。
         """
         try:
             with open(file_path, "r", encoding='utf-8') as f:
@@ -218,9 +258,16 @@ class ReadFiles:
     @classmethod
     def read_text(cls, file_path: str) -> str:
         """
-        读取普通文本文件内容。
-        :param file_path: 文本文件路径
-        :return: 文件内容
+        读取普通文本文件的内容。
+
+        Args:
+            file_path (str): 文本文件路径。
+
+        Returns:
+            str: 文件内容。
+
+        Raises:
+            FileExistsError: 当文件不存在时抛出。
         """
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -231,6 +278,15 @@ class ReadFiles:
 
     @classmethod
     def read_word(cls, file_path: str) -> str:
+        """
+        读取 Word (.docx/.doc) 文件并返回文本内容。
+
+        Args:
+            file_path (str): Word 文件路径。
+
+        Returns:
+            str: 文件中的文本内容。
+        """
         loader = Docx2txtLoader(file_path)
         text = ""
         for page in loader.load():

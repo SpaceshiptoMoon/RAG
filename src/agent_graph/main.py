@@ -1,5 +1,6 @@
 
-from langgraph import Graph
+# 将原来的导入语句替换为：
+from langgraph.graph import StateGraph
 from src.agent_graph.state import AgentState
 from src.agent_graph.nodes import agent_node, tool_node, router
 from src.agent_graph.utils import logger
@@ -9,7 +10,7 @@ def run_agent(user_input: str, max_steps: int = 8):
     主流程编排，支持最大步数与结构化输出
     """
     state = AgentState(messages=[{"role": "user", "content": user_input}], tool_calls=[])
-    graph = Graph()
+    graph = StateGraph()
     graph.add_node("agent_node", agent_node)
     graph.add_node("tool_node", tool_node)
     graph.add_node("router", router)

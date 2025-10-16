@@ -74,17 +74,33 @@ class AnswerGenerator:
             }
     
     def _format_context(self, docs: List[Dict[str, Any]]) -> str:
-        """格式化上下文文档"""
+        """
+        将检索到的文档列表格式化为 LLM 可消费的上下文字符串。
+
+        Args:
+            docs (List[Dict[str, Any]]): 检索到的文档，每个文档包含 text 和 metadata。
+
+        Returns:
+            str: 按顺序拼接的上下文字符串。
+        """
         context_parts = []
         for i, doc in enumerate(docs, 1):
-            source = doc.get("metadata").get('source_file', '未知来源')
+            source = (doc.get("metadata") or {}).get('source_file', '未知来源')
             text = doc.get("text", "")[:500]  # 限制长度
             context_parts.append(f"[文档 {i} - 来源: {source}]\n{text}\n")
         
         return "\n".join(context_parts)
     
     def _calculate_confidence(self, docs: List[Dict[str, Any]]) -> float:
-        """计算回答置信度（简化版）"""
+        """
+        计算回答置信度（简化版）。
+
+        Args:
+            docs (List[Dict[str, Any]]): 用于计算置信度的检索文档列表。
+
+        Returns:
+            float: 置信度值，范围在 0.0 - 1.0 之间。
+        """
         if not docs:
             return 0.0
         # 基于检索结果的数量和质量计算置信度

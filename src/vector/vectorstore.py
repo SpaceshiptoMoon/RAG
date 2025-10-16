@@ -51,8 +51,17 @@ class DocumentVectorizer:
             coll.load()
             logger.info(f"已存在 Milvus 集合 {self.collection_name}，已加载")
         
-    def txt_to_Document(self, chunk: Union[List, str])->List[Document]:
-        docs = []
+    def txt_to_Document(self, chunk: Union[List[str], str]) -> List[Document]:
+        """
+        将文本或文本列表转换为 langchain Document 对象列表。
+
+        Args:
+            chunk (List[str] | str): 单个文本或文本列表。
+
+        Returns:
+            List[Document]: 对应的 Document 列表。
+        """
+        docs: List[Document] = []
         if isinstance(chunk, list):
             for txt in chunk:
                 if isinstance(txt, str) and txt.strip():
@@ -61,8 +70,17 @@ class DocumentVectorizer:
             docs.append(Document(page_content=chunk))
         return docs
         
-    def create_vector_store(self, chunks: List, persist: bool = True) -> None:
-        """对传入chunks做嵌入并插入Milvus（兼容旧接口）"""
+    def create_vector_store(self, chunks: List[Union[Document, str]], persist: bool = True) -> None:
+        """
+        对传入的文本块进行嵌入并插入到 Milvus 向量数据库（兼容旧接口）。
+
+        Args:
+            chunks (List[Document] | List[str]): 待处理的文本块或 Document 列表。
+            persist (bool): 是否持久化写入（保留参数以兼容旧接口），默认 True。
+
+        Returns:
+            None
+        """
         try:
             texts = [d.page_content if isinstance(d, Document) else str(d) for d in chunks]
             if not texts:
@@ -75,7 +93,12 @@ class DocumentVectorizer:
             raise
         
     def delete_db(self) -> None:
-        """清空当前Milvus集合：删除后重建"""
+        """
+        清空当前 Milvus 集合：删除集合后重新创建集合以恢复初始状态。
+
+        Returns:
+            None
+        """
         try:
             if self.milvus.has_collection(self.collection_name):
                 self.milvus.drop_collection(self.collection_name)
@@ -84,14 +107,16 @@ class DocumentVectorizer:
         except Exception as e:
             logger.error(f"清空集合失败: {e}")
                 
-    def query_similarity(self, query: str, top_k: int = 5) -> List:
+    def query_similarity(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        查询相似文档
+        在当前集合中执行相似度查询并返回格式化结果。
+
         Args:
-            query: 查询文本
-            top_k: 返回最相似文档数量
+            query (str): 查询文本。
+            top_k (int): 返回的最相似文档数量，默认 5。
+
         Returns:
-            相似文档列表
+            List[Dict[str, Any]]: 检索结果列表，每项包含 id/text/metadata/distance 等字段。
         """
         try:
             query_vector = self.embedding_client.embed_query(query)
@@ -104,9 +129,11 @@ class DocumentVectorizer:
         
     def _initialize_vector_store(self, collection_name: str = "documents_collection") -> None:
         """
-        初始化或加载向量存储
+        初始化或切换到指定的向量集合名称并确保集合存在。
+
         Args:
-            collection_name: 集合名称，用于区分不同的文档集合
+            collection_name (str): 集合名称，用于区分不同的文档集合。
+
         Returns:
             None
         """
@@ -118,11 +145,13 @@ class DocumentVectorizer:
             
     def process_document(self, batch_size: int = 50) -> bool:
         """
-        处理单个文档的完整流程（适配新版insert方法）
+        处理单个文档的完整流程（适配新版 insert 方法），包括读取、分块、嵌入、分批插入。
+
         Args:
-            batch_size: 每批处理的chunk数量
+            batch_size (int): 每批处理的 chunk 数量，默认 50。
+
         Returns:
-            处理是否成功
+            bool: 若至少有一个批次成功插入则返回 True，否则返回 False。
         """
         file_path = self.doc_reader._path
         try:
@@ -196,10 +225,15 @@ class DocumentVectorizer:
 
     def _generate_batch_ids(self, file_path: str, start_index: int, batch_size: int) -> List[str]:
         """
-        为批次生成唯一ID（幂等性关键）
-        
-        格式: {file_hash}_{chunk_start_index}_{chunk_index}
-        示例: "abc123_0_0", "abc123_0_1", ...
+        为一批文本生成唯一且幂等的 ID 列表，便于后续去重或重复插入判断。
+
+        Args:
+            file_path (str): 源文件路径，用于生成文件哈希。
+            start_index (int): 批次起始的全局 chunk 索引。
+            batch_size (int): 本批次包含的 chunk 数量。
+
+        Returns:
+            List[str]: 生成的 ID 列表，格式为 `{file_hash}_{start_index}_{j}`。
         """
 
         file_hash = hashlib.md5(file_path.encode()).hexdigest()[:8]
@@ -213,7 +247,17 @@ class DocumentVectorizer:
         return ids
 
     def _prepare_metadatas(self, file_path: str, chunks: List[str], start_index: int) -> List[Dict[str, Any]]:
-        """准备元数据列表"""
+        """
+        为一批 chunk 准备 metadata 列表，每个 metadata 包含源文件、chunk 索引、长度和时间戳。
+
+        Args:
+            file_path (str): 源文件路径。
+            chunks (List[str]): 本批次的文本 chunk 列表。
+            start_index (int): 批次起始的全局 chunk 索引。
+
+        Returns:
+            List[Dict[str, Any]]: 与 chunks 等长的 metadata 字典列表。
+        """
         metadatas = []
         for j, chunk in enumerate(chunks):
             metadata = {

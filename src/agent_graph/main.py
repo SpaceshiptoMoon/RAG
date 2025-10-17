@@ -1,13 +1,19 @@
 
+<<<<<<< HEAD
 from typing import Dict, Any, Optional
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 
+=======
+# 将原来的导入语句替换为：
+from langgraph.graph import StateGraph
+>>>>>>> 8541714ab2b821a29b196d756e67b837af0af4d3
 from src.agent_graph.state import AgentState
 from src.agent_graph.nodes import agent_node, tool_node, router
 from src.agent_graph.tools import TOOLS
 from src.agent_graph.utils import logger
 
+<<<<<<< HEAD
 def create_agent_graph(config: Optional[Dict[str, Any]] = None) -> StateGraph:
     config = config or {"max_iterations": 6, "timeout": 30}
     workflow = StateGraph(AgentState)
@@ -25,6 +31,22 @@ def create_agent_graph(config: Optional[Dict[str, Any]] = None) -> StateGraph:
     )
     workflow.add_edge("tools", "agent")
     return workflow.compile()
+=======
+def run_agent(user_input: str, max_steps: int = 8):
+    """
+    主流程编排，支持最大步数与结构化输出
+    """
+    state = AgentState(messages=[{"role": "user", "content": user_input}], tool_calls=[])
+    graph = StateGraph()
+    graph.add_node("agent_node", agent_node)
+    graph.add_node("tool_node", tool_node)
+    graph.add_node("router", router)
+    graph.add_edge("agent_node", "router")
+    graph.add_edge("router", "tool_node", condition=lambda s: s.get("tool_calls"))
+    graph.add_edge("router", "END", condition=lambda s: not s.get("tool_calls"))
+    graph.add_edge("tool_node", "agent_node")
+    graph.compile()
+>>>>>>> 8541714ab2b821a29b196d756e67b837af0af4d3
 
 def create_initial_state(query: str) -> AgentState:
     return AgentState(

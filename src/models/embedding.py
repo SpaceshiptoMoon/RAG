@@ -191,7 +191,7 @@ class EmbeddingClient:
             test_text = "test"
             embedding = self.embed_query(test_text)
             return len(embedding)
-        except:
+        except Exception:
             # 返回常见默认维度
             return 768
 

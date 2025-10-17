@@ -3,20 +3,10 @@ import os
 import logging
 from dotenv import load_dotenv
 from typing import List, Optional
-
+from src.log.log_config import setup_logger
 
 # 日志配置：时间 文件 信息
-logging.basicConfig(
-    format='%(asctime)s %(filename)s %(levelname)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    level=logging.INFO
-)
-
-# 可选依赖，运行时按需导入，避免导入错误导致模块加载失败
-try:
-    from langchain_ollama import ChatOllama
-except Exception:
-    ChatOllama = None
+logger = setup_logger(__name__)
 
 try:
     from langchain_openai import ChatOpenAI
@@ -24,7 +14,7 @@ except Exception:
     ChatOpenAI = None
 
 from src.prompt.prompt_template import PROMPT_TEMPLATE
-
+from langchain_community.chat_models import ChatOllama
 
 
 class OllamaModel:

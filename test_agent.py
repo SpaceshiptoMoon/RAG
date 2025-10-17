@@ -1,8 +1,6 @@
 from src.agent_graph.main import run_agent
 queries = [
-    "1加2等于多少?",
-    "北京今天天气怎么样?",
-    "你是谁?"
+    "今天A股什么趋势，怎么样？"
 ]
 
 for query in queries:

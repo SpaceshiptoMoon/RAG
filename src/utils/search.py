@@ -8,13 +8,13 @@ class GoogleSearch:
         "x-rapidapi-host": "google-search72.p.rapidapi.com"
     }
         
-    def search(self, query: str = ""):
+    def search(self, query: str = "", num: int = 3):
         query = query.strip()
 
         if query == "":
             raise ValueError("请输入问题")
         
-        querystring = {"q":query,"lr":"zh-cn","num":"3"}
+        querystring = {"q":query,"lr":"zh-cn","num": str(num)}
 
         response = requests.get(self.base_url, headers=self.headers, params=querystring)
         
@@ -44,5 +44,5 @@ if __name__ == "__main__":
     api_key = os.getenv("GOOGLE_SEARCH_API")
     base_url = "https://google-search72.p.rapidapi.com/search"
     search = GoogleSearch(api_key, base_url)
-    res = search.search('周杰伦')
+    res = search.search(query='周杰伦')
     print(res)

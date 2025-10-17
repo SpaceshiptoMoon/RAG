@@ -1,29 +1,35 @@
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 
 from src.agent_graph.state import AgentState
-from src.agent_graph.nodes import agent_node, tool_node, router
-from src.agent_graph.tools import TOOLS
+from src.agent_graph.nodes import agent_node, tool_node, router, audit_node, generate_node
 from src.agent_graph.utils import logger
 
-def create_agent_graph(config: Optional[Dict[str, Any]] = None) -> StateGraph:
-    config = config or {"max_iterations": 6, "timeout": 30}
+def create_agent_graph() -> StateGraph:
     workflow = StateGraph(AgentState)
     workflow.add_node("agent", agent_node)
+    # 新增审核与生成节点
+    workflow.add_node("audit", audit_node)
     workflow.add_node("tools", tool_node)
+    workflow.add_node("generate", generate_node)
     workflow.set_entry_point("agent")
     workflow.add_conditional_edges(
         "agent",
         router,
         {
-            "tools": "tools",
+            # 当 router 决定需要工具时，先进入 audit 节点进行复审
+            "tools": "audit",
             "agent": "agent",
             "END": END
         }
     )
-    workflow.add_edge("tools", "agent")
+    # 审核通过后进入工具执行
+    workflow.add_edge("audit", "tools")
+    # 工具执行完成后进入生成节点，生成完返回 agent 继续或结束
+    workflow.add_edge("tools", "generate")
+    workflow.add_edge("generate", "agent")
     return workflow.compile()
 
 def create_initial_state(query: str) -> AgentState:
@@ -55,8 +61,8 @@ def get_final_response(state: AgentState) -> Dict[str, Any]:
         "messages": messages
     }
 
-def run_agent(query: str, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    graph = create_agent_graph(config)
+def run_agent(query: str) -> Dict[str, Any]:
+    graph = create_agent_graph()
     state = create_initial_state(query)
     try:
         final_state = graph.invoke(state)

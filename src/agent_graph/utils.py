@@ -3,6 +3,7 @@ from src.log.log_config import setup_logger
 import functools
 import time
 
+
 logger = setup_logger("agent_graph")
 
 def retry_on_exception(max_retries=2, delay=1):

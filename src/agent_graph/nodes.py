@@ -85,7 +85,8 @@ def agent_node(state: AgentState) -> AgentState:
 """
     try:
         response = llm.invoke(prompt)
-        result = json.loads(response)
+        result = json.loads(response.content)
+        state["messages"].append(response)
         
         if result.get("需要工具", False):
             tool_name = result.get("选择工具")
@@ -163,7 +164,7 @@ def tool_node(state: AgentState) -> AgentState:
                     call["result"] = raw
                     call["error"] = None
 
-                logger.info(f"ToolNode: 工具 {tool_name} 执行成功，结果: {call['result']}")
+                logger.info(f"ToolNode: 工具 {tool_name} 执行成功!")
             except Exception as e:
                 call["result"] = None
                 call["error"] = str(e)
@@ -215,6 +216,7 @@ def audit_node(state: AgentState) -> AgentState:
     # 获取最近的用户输入和系统回复
     last_human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
     last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+    tool_msge = next((m for m in reversed(messages) if isinstance(m, ToolMessage)), None)
     
     if not last_human or not last_ai:
         logger.warning("AuditNode: 缺少用户输入或系统回复，跳过审核")
@@ -233,6 +235,8 @@ def audit_node(state: AgentState) -> AgentState:
     prompt = f"""作为回复质量审核员，请评估系统的回复是否充分满足用户的需求。
 
 用户原始输入: {last_human.content}
+
+工具的调用: {tool_msge.content}
 
 系统的回复: {last_ai.content}
 
@@ -253,33 +257,35 @@ def audit_node(state: AgentState) -> AgentState:
     
     try:
         response = llm.invoke(prompt)
-        result = json.loads(response)
+        result = json.loads(response.content)
         
         satisfaction = result.get("满意度", 0)
         needs_continue = result.get("需要继续", True)
         reason = result.get("原因", "未提供原因")
         suggestion = result.get("建议", "")
         
+        audit_result = {
+            "satisfaction": satisfaction,
+            "proceed": needs_continue,
+            "reason": reason,
+            "suggestion": suggestion
+            }
+
+        state["audit"].append(audit_result)
+
         logger.info(f"AuditNode: 满意度 {satisfaction}/100, 需要继续: {needs_continue}")
         logger.info(f"AuditNode: 原因: {reason}")
         
-        if needs_continue or satisfaction < 70:  # 设置满意度阈值
+        if needs_continue or satisfaction < 60:  # 设置满意度阈值
             # 添加审核反馈到消息历史
             feedback = f"我觉得当前回答还不够完善：{reason}\n建议：{suggestion}"
             messages.append(AIMessage(content=feedback))
-            state["messages"] = messages
-            state["audit_passed"] = False  # 标记需要继续处理
             logger.info("AuditNode: 审核未通过，需要继续完善")
         else:
-            state["audit_passed"] = True
             logger.info("AuditNode: 审核通过，回复满足用户需求")
             
     except Exception as e:
         logger.error(f"AuditNode: 审核过程出错: {e}")
-        state["audit_passed"] = True  # 出错时默认通过
-        messages.append(AIMessage(content="注意：回复质量审核过程中遇到技术问题，但我们仍会继续处理您的请求。"))
-        state["messages"] = messages
-    
     return state
 
 
@@ -305,8 +311,8 @@ def generate_node(state: AgentState) -> AgentState:
     tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
     
     if not tool_msgs:
-        logger.info("GenerateNode: 未发现工具结果，跳过生成")
-        return state
+        logger.info("GenerateNode: 未发现工具结果，使用默认回复")
+        tool_msgs = []
         
     if not last_human:
         logger.warning("GenerateNode: 未找到用户问题，使用默认回复")
@@ -326,15 +332,18 @@ def generate_node(state: AgentState) -> AgentState:
     
     # 构建上下文提示
     tool_results = []
-    for tm in tool_msgs:
-        name = getattr(tm, "name", "tool")
-        result = getattr(tm, "result", None)
-        args = getattr(tm, "args", {})
-        tool_results.append({
-            "工具": name,
-            "参数": args,
-            "结果": result if result is not None else tm.content
-        })
+    if tool_msgs:
+        for tm in tool_msgs:
+            name = getattr(tm, "name", "tool")
+            result = getattr(tm, "result", None)
+            args = getattr(tm, "args", {})
+            tool_results.append({
+                "工具": name,
+                "参数": args,
+                "结果": result if result is not None else tm.content
+            })
+    else:
+        tool_results = [{"工具": "无", "参数": {}, "结果": "无"}]
     
     prompt = f"""作为AI助手，请基于以下信息生成一个清晰的回复：
 
@@ -358,7 +367,7 @@ def generate_node(state: AgentState) -> AgentState:
 
     try:
         response = llm.invoke(prompt)
-        result = json.loads(response)
+        result = json.loads(response.content)
         
         # 添加生成的回复
         reply = result.get("回复内容", "抱歉，我无法生成有效的回复。")
@@ -388,38 +397,30 @@ def router(state: AgentState) -> str:
     3. 达到终止条件 -> 结束
     4. 其他情况 -> 继续思考
     """
-    messages = state["messages"]
-    plan = state.get("plan", {})
-    
-    # 优先检查审核结果
-    if not state.get("audit_passed", True):
-        logger.info("Router: 审核未通过，返回agent节点重新处理")
-        state["audit_passed"] = True  # 重置审核状态
-        return "agent"
-    
     # 检查是否有待执行的工具调用
     if state.get("tool_calls"):
         logger.info("Router: 发现工具调用，转到tool_node")
         return "tools"
     
-    # 检查是否达到结束条件
-    last_msg = messages[-1] if messages else None
-    is_final_answer = (
-        isinstance(last_msg, AIMessage) and
-        ("最终答案" in last_msg.content or "结论" in last_msg.content)
-    )
-    if is_final_answer:
-        logger.info("Router: 检测到最终答案，流程结束")
-        return "END"
+    logger.info("Router: 不需要使用工具，转到generate节点")
+    return "generate"
+
+
+def audit_router(state: AgentState) -> str:
+    """
+    路由节点：确定下一步行动
     
-    # 检查计划完成情况
-    if plan:
-        total_steps = len(plan.get("tasks", []))
-        current_step = plan.get("current_step", 0)
-        if current_step >= total_steps:
-            logger.info("Router: 计划已完成，流程结束")
-            return "END"
+    决策逻辑:
+    1. 如果审核未通过 -> 返回 agent 节点重新处理
+    2. 达到终止条件 -> 结束
+    """
+    audit_passed = state.get("audit")[-1].get("proceed")
     
-    # 继续思考
-    logger.info("Router: 继续agent推理")
-    return "agent"
+    # 优先检查审核结果
+    if audit_passed:
+        logger.info("audit_router: 审核通过，继续agent推理")
+        return "end"
+    else:
+        logger.info("audit_router: 审核未通过，返回agent节点重新处理")
+        return "agent"
+    

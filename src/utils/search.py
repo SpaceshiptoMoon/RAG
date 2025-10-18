@@ -27,6 +27,7 @@ class GoogleSearch:
         else:
             result_arr = []
             result_str = ""
+            result_dict = {}
             for i in range(len(response.json()['items'])):
                 item = data_list[i]
                 title = item["title"]
@@ -35,7 +36,8 @@ class GoogleSearch:
  
                 result_arr.append(item_str)
             result_str = "\n".join(result_arr)
-        return result_str
+            result_dict["result"] = result_str
+        return result_dict
 
 if __name__ == "__main__":
     from dotenv import load_dotenv

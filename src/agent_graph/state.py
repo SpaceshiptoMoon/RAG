@@ -12,6 +12,18 @@ class ToolCall(TypedDict):
     error: Optional[str]  # 错误信息（如果有）
     thought: Optional[str]  # 调用工具的思考过程
 
+
+
+
+class Auditstate(TypedDict):
+    """
+    工具调用轨迹结构，记录工具调用的完整信息
+    """
+    satisfaction: Optional[int]   # 执行结果
+    proceed: Optional[bool]  # 错误信息（如果有）
+    reason: Optional[str]  # 调用工具的思考过程
+    suggestion: Optional[str]  # 调用工具的思考过程
+
 class AgentState(TypedDict):
     """
     智能体状态结构
@@ -23,3 +35,5 @@ class AgentState(TypedDict):
     messages: List[BaseMessage]  # 使用 LangChain 消息类型
     tool_calls: List[ToolCall]  # 当前待执行的工具调用
     plan: Optional[Dict[str, Any]]  # 当前执行计划，包含子任务列表与进度
+    audit: List[Auditstate] # 审核是否通过
+

@@ -25,7 +25,7 @@ class Searcher(BaseModel):
 
 @tool(
     name_or_callable="searcher",
-    description="使用谷歌搜索引擎获取搜索结果，当你需要获得外部信息或者实时信息时，你可以使用它。参数: query(str), num(int)",
+    description="使用谷歌搜索引擎获取外部信息，当你需要获得外部信息或者实时信息时，你可以使用它。参数: query(str), num(int)",
     # return_direct=True  # 先注释，便于排查
 )
 def searcher(query:str, num:int):

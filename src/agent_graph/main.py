@@ -54,8 +54,8 @@ def create_initial_state(query: str) -> AgentState:
     return AgentState(
         messages=[HumanMessage(content=query)],
         tool_calls=[],
-        plan=None,
-        audit_passed=None
+        plan=[],
+        audit=[]
     )
 
 def get_final_response(state: AgentState) -> Dict[str, Any]:

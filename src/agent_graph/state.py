@@ -34,6 +34,6 @@ class AgentState(TypedDict):
     """
     messages: List[BaseMessage]  # 使用 LangChain 消息类型
     tool_calls: List[ToolCall]  # 当前待执行的工具调用
-    plan: Optional[Dict[str, Any]]  # 当前执行计划，包含子任务列表与进度
+    plan: list[Dict[str, Any]]  # 当前执行计划，包含子任务列表与进度
     audit: List[Auditstate] # 审核是否通过
 

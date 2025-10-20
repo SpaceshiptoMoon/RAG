@@ -46,7 +46,7 @@ def agent_node(state: AgentState) -> AgentState:
     logger.info(f"AgentNode: LLM意图识别，当前消息数 {len(messages)}")
 
     # 找到最近的用户输入
-    last_human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+    last_human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), HumanMessage(content=""))
     if last_human is None:
         logger.warning("AgentNode: 未发现 HumanMessage，保持现有 state")
         state["messages"] = messages
@@ -69,11 +69,37 @@ def agent_node(state: AgentState) -> AgentState:
         state["tool_calls"] = []
         return state
 
+    histories = []
+    if state.get("audit") and state.get("audit")[-1].get("proceed"):
+
+    # 使用 enumerate 遍历，同时获取序号 (index) 和消息本身 (message)
+        for index, message in enumerate(messages, 1):  # start=1 让序号从1开始
+            # 1. 根据消息类型确定发送者标识
+            if isinstance(message, HumanMessage):
+                sender = "用户"
+            elif isinstance(message, AIMessage):
+                sender = "AI助手"
+            elif isinstance(message, ToolMessage):
+                sender = "工具"
+            else:
+                sender = "未知"  # 兜底处理，根据你的过滤逻辑，理论上不会执行这里
+
+            # 2. 获取消息内容。使用 getattr 安全获取，避免 content 为 None 的情况
+            content = getattr(message, 'content', '')
+            # 或者根据你的消息对象结构，也可能是 message.content
+            # 如果 content 可能是复杂对象，可以转换为字符串
+            content_str = str(content) if content is not None else "(空内容)"
+
+            # 3. 按照顺序添加
+            histories.append(f"[{index}] {sender}: {content_str}")
+
     # 意图识别提示
     prompt = f"""分析用户输入，判断是否需要使用工具。可用工具列表：
 {chr(10).join(tools_desc)}
 
 用户输入: {last_human.content}
+
+历史记录: {"\n".join(histories)}
 
 请用 JSON 格式输出你的分析结果：
 {{
@@ -214,9 +240,10 @@ def audit_node(state: AgentState) -> AgentState:
     messages = state.get("messages", []) or []
     
     # 获取最近的用户输入和系统回复
-    last_human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
-    last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
-    tool_msge = next((m for m in reversed(messages) if isinstance(m, ToolMessage)), None)
+
+    last_human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), HumanMessage(content=""))
+    last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), AIMessage(content=""))
+    tool_msg = next((m for m in reversed(messages) if isinstance(m, ToolMessage)), ToolMessage(content="", tool_call_id=""))
     
     if not last_human or not last_ai:
         logger.warning("AuditNode: 缺少用户输入或系统回复，跳过审核")
@@ -236,7 +263,7 @@ def audit_node(state: AgentState) -> AgentState:
 
 用户原始输入: {last_human.content}
 
-工具的调用: {tool_msge.content}
+工具的调用: {tool_msg.content}
 
 系统的回复: {last_ai.content}
 
@@ -417,7 +444,7 @@ def audit_router(state: AgentState) -> str:
     audit_passed = state.get("audit")[-1].get("proceed")
     
     # 优先检查审核结果
-    if audit_passed:
+    if not audit_passed:
         logger.info("audit_router: 审核通过，继续agent推理")
         return "end"
     else:
